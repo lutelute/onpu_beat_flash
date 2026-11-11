@@ -168,6 +168,7 @@ const tone = () => page.$eval('.acct-status', (e) => e.dataset.tone).catch(() =>
 const synced = () => waitFor(async () => (await tone()) === 'ok');
 const shownAnswers = async () => Number(/答えた回数 (\d+)/.exec((await text('main .card .field-note')) ?? '')?.[1] ?? NaN);
 async function fill(name, pass) {
+  expect(await waitFor(() => has('.acct-form')), 'ログインの入力欄が出ない');
   await page.$eval('.acct-form input[name=username]', (e) => (e.value = ''));
   await page.$eval('.acct-form input[name=password]', (e) => (e.value = ''));
   if (name) await page.type('.acct-form input[name=username]', name);
@@ -229,6 +230,7 @@ await scenario('アカウントを作る → ログイン中になる（名前�
 await scenario('同じ名前では作れない。パスワードが違うと入れない（入れた文字は残る）', async () => {
   await device();
   await go('#/account');
+  expect(await waitFor(() => has('.acct-form')), '入力欄が出ない');
   await page.click('.acct-form .linkbtn');
   await fill('taro', 'another1');
   await submit();
@@ -354,6 +356,17 @@ await scenario('開いた直後（まだ確かめ終わっていないとき）�
   expect((await shownAnswers()) === total, '記録が出ない');
   expect((await page.$eval('main .card .actions .btn', (e) => e.disabled)) === true, '確かめ終わる前に「いま合わせる」が押せる');
   await patchCloud((c) => ({ ...c, hang: false }));
+});
+
+await scenario('初めて開いて確かめているあいだは、ログインの入力欄を出さない（8 秒たっても分からなければ出す）', async () => {
+  await device();
+  await patchCloud((c) => ({ ...c, hang: true }));
+  await go('#/account');
+  expect(await waitFor(async () => /ログインしているか確かめています/.test((await text('main .acct-status')) ?? '')), `確かめている表示が出ない: ${await text('main')}`);
+  expect(!(await has('.acct-form')), '確かめ終わる前に入力欄が出た');
+  expect(await waitFor(() => has('.acct-form'), 12000), '8 秒たっても入力欄が出ない');
+  await patchCloud((c) => ({ ...c, hang: false }));
+  await signIn('Taro', 'secret1'); // 次の場面のために入り直す
 });
 
 await scenario('ログアウトすると端末の記録に戻り、入り直すとアカウントの記録に戻る', async () => {

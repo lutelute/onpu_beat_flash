@@ -12,6 +12,7 @@
     "e2e:mic": "node tests/e2e/mic.mjs",
     "e2e:account": "node tests/e2e/account.mjs",
     "e2e:emu": "npx -y firebase-tools@15 emulators:exec --config tests/e2e/emu/firebase.json --project demo-tsuri-sugoroku --only auth,firestore \"node tests/e2e/account-emu.mjs\"",
+    "e2e:share": "npx -y firebase-tools@15 emulators:exec --config tests/e2e/emu/firebase.json --project demo-tsuri-sugoroku --only auth,firestore \"node tests/e2e/share.mjs\"",
     "check": "npm test && npm run e2e && npm run e2e:account",
     "icons": "node scripts/make-icons.mjs",
     "art": "node scripts/make-art.mjs"

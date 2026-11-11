@@ -17,15 +17,29 @@ export function mountAccount(root, { life }) {
   let refresh = () => {};
   const update = () => {
     const s = account();
-    const kind = s.phase === 'in' ? 'in' : 'form';
+    // 確かめているあいだは入力欄を出さない（釣りすごろくでログイン済みの人に、一瞬ログインの画面を見せないように）
+    const kind = s.phase === 'in' ? 'in' : s.phase === 'checking' ? 'checking' : 'form';
     if (kind !== built) {
       built = kind;
-      refresh = kind === 'in' ? buildIn(root, life) : buildForm(root);
+      refresh = kind === 'in' ? buildIn(root, life) : kind === 'checking' ? buildChecking(root) : buildForm(root);
     }
     refresh(s);
   };
   onAccount(update, life);
   update();
+}
+
+// ---------------- ログインしているか確かめている（開いた直後） ----------------
+function buildChecking(root) {
+  root.replaceChildren(
+    h('section', { class: 'card' },
+      h('h2', {}, 'アカウント'),
+      h('p', { class: 'acct-status', role: 'status', dataset: { tone: 'busy' } },
+        h('span', { class: 'acct-dot', 'aria-hidden': 'true' }),
+        h('span', {}, 'ログインしているか確かめています…'))),
+    about(),
+  );
+  return () => {};
 }
 
 // ---------------- ログインしていない ----------------

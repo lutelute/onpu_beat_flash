@@ -45,6 +45,7 @@ npm run e2e      # 本番と同じビルドを手元の Google Chrome で通し�
 npm run e2e:mic  # 偽マイクに WAV を流して、マイクで答えられるかを確かめる
 npm run e2e:account  # アカウント（登録・ログイン・別の端末・ログアウト）を、偽のアカウントで通しで動かす
 npm run e2e:emu  # Firebase につなぐ部分を、手元のエミュレータで確かめる（Java 21 以上が要る。初回はエミュレータを取ってくる）
+npm run e2e:share  # 公開中の釣りすごろくと同じ場所に置いて、ログインが行き来するかを確かめる（エミュレータで。ネットが要る）
 npm run build    # dist/ にできる。どこのフォルダに置いても動く
 npm run icons    # アプリのアイコン（public/icon-*.png など）を作り直す
 npm run art      # バナー（public/og.png、docs/banner.png・square.png・screens.png）を作り直す
@@ -61,7 +62,8 @@ npm run art      # バナー（public/og.png、docs/banner.png・square.png・sc
 - **設定は端末ごと**（音量・明るさ・MIDI・マイク・ゲームごとの設定）。アカウントには入れない
 - **ログインする前の記録**は、ログインしても勝手には混ざらない。アカウントの画面の「アカウントに足す」で移す（家族で同じ端末を使っていても、ほかの人の記録が入らないように）
 - **つながらないとき**は、アカウントごとの入れ物（`localStorage`）に書いておき、つながったら送る。送るのは「この端末で増えた分」なので、2 台で別々に練習しても、どちらの分も残る
-- Firebase の部品は別のファイルに分かれ、画面が出たあとで読み込む。読み込めなくても遊べる
+- Firebase の部品は別のファイルに分かれ、画面が出たあとで読み込む。読み込めなくても遊べる。確かめているあいだ（最長 8 秒）は、アカウントの画面にログインの入力欄を出さない
+- 釣りすごろくの側を変えたら `npm run e2e:share` を走らせる（公開中の釣りすごろくを写して、ログインが行き来するかを見る）
 
 ## 公開する
 
@@ -130,7 +132,7 @@ src/
   games.js         ゲームの一覧（生成器 × 遊び方）
   main.js          画面の切り替え（#/、#/game/<id>、#/guide、#/stats、#/account、#/about）
   sw-template.js   Service Worker の元（ビルドで出力ファイルの一覧を埋めて dist/sw.js にする）
-tests/             生成器・設定・リズム判定・オトバトルの進行・音の高さのテスト、e2e/ にブラウザの通しのテスト（mic.mjs は偽マイクに WAV を流す。account.mjs は偽のアカウント、account-emu.mjs は Firebase のエミュレータ）
+tests/             生成器・設定・リズム判定・オトバトルの進行・音の高さのテスト、e2e/ にブラウザの通しのテスト（mic.mjs は偽マイクに WAV を流す。account.mjs は偽のアカウント、account-emu.mjs は Firebase のエミュレータ、share.mjs は釣りすごろくとのログインの共有）
 scripts/           アイコン・バナーを作る
 docs/              README の画像
 extras/            元の OtoBattle の公開ページから、ここのオトバトルへ案内するページ（使い方は中の README）

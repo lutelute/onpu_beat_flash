@@ -88,6 +88,8 @@ export function initAccount() {
     });
   if (typeof requestIdleCallback === 'function') requestIdleCallback(start, { timeout: 1500 });
   else setTimeout(start, 300);
+  // 8 秒たっても確かめ終わらなければ、ログインの入力欄を出しておく（あとで分かれば、その状態に切り替わる）
+  setTimeout(() => state.phase === 'checking' && set({ phase: 'out' }), 8000);
 
   onAccountData(() => schedule(4000)); // 答えるたびに呼ばれる。区切りがつくまで待ってから送る
   window.addEventListener('online', () => {
