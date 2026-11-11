@@ -1,0 +1,57 @@
+rules_version = '2';
+
+// 釣りすごろく Firestore セキュリティルール
+//
+// 設計上の制約:
+//   このゲームは1つのクライアントセッションから複数ユーザーのドキュメントへ書き込む
+//   （マルチプレイの引き継ぎで、ホスト以外の紐付けプレイヤーの装備・所持金・図鑑・
+//    ランキングもまとめて保存する）。そのため users/{uid} を「所有者のみ書き込み可」に
+//   すると引き継ぎ機能が壊れる。ここでは機能を壊さない範囲で、
+//     - 未認証クライアントからの書き込みを禁止
+//     - ランキングのスコアを型・範囲で検証
+//     - 他者ランキングの改竄/削除を禁止
+//   までを担保する。所有者単位の完全なデータ隔離はデータモデルの再設計が前提。
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // ユーザーごとのゲームデータ（図鑑・セーブ・装備・所持金・プロフィール）
+    // 読み取り: マルチプレイの引き継ぎ表示のため認証済みなら許可
+    // 書き込み: 認証必須（引き継ぎ保存のため所有者限定にはできない）
+    match /users/{uid}/{document=**} {
+      allow read: if signedIn();
+      allow write: if signedIn();
+    }
+
+    // ユーザー名 → uid 逆引き（検索用、公開読み取り）
+    match /usernames/{name} {
+      allow read: if true;
+      allow write: if signedIn();
+    }
+
+    // 検索・一覧用プロフィール（公開読み取り）
+    match /profiles/{uid} {
+      allow read: if true;
+      allow write: if signedIn();
+    }
+
+    // ランキング: 公開読み取り。作成は認証必須＋スコアの型/範囲を検証。
+    // 既存エントリの改竄・削除は禁止。
+    match /rankings/{id} {
+      allow read: if true;
+      allow create: if signedIn()
+        && request.resource.data.uid is string
+        && request.resource.data.displayName is string
+        && request.resource.data.score is number
+        && request.resource.data.score >= 0
+        && request.resource.data.score <= 1000000
+        && request.resource.data.encyclopediaRate is number
+        && request.resource.data.encyclopediaRate >= 0
+        && request.resource.data.encyclopediaRate <= 100;
+      allow update, delete: if false;
+    }
+  }
+}
