@@ -138,6 +138,7 @@ async function collectAnswers(n) {
   expect(await waitFor(async () => (await page.evaluate(() => window.__answers.length)) >= n, 15000), `マイクの音で答えが ${n} つ入らない`);
   return page.evaluate(() => window.__answers);
 }
+const micOn = async () => /マイクで聞いています/.test((await text('.mic-status')) || '');
 /** 設定画面のメーターに出た音を、しばらく集める */
 async function collectMeter() {
   const seen = new Set();
@@ -174,6 +175,23 @@ await scenario('マイクの様子は「マイクで答える」のすぐ下に�
   expect(await waitFor(async () => /が聞こえています/.test((await text('.mic-say')) || ''), 8000), `聞こえ方の言葉が出ない: ${await text('.mic-say')}`);
   // MIDI がオフなら、マイクで聞こえた音を MIDI の「受け取った音」には出さない
   expect(await page.$eval('.midi-note', (e) => e.hidden), 'MIDI がオフなのに受け取った音が出る');
+});
+
+await scenario('使うマイクを選べる（選ぶとつなぎ直して聞き続け、保存される。見つからないマイクなら、いつものマイクに戻る）', async () => {
+  await open('#/settings', { global: global() });
+  expect(await waitFor(micOn), 'マイクがオンにならない');
+  expect(await waitFor(async () => (await page.$$eval('select.mic-device option', (o) => o.length)) >= 2, 5000), 'マイクの一覧が出ない');
+  const opts = await page.$$eval('select.mic-device option', (o) => o.map((x) => ({ v: x.value, t: x.textContent })));
+  const other = opts.find((o) => o.v);
+  expect(other, `選べるマイクが無い: ${JSON.stringify(opts)}`);
+  await page.select('select.mic-device', other.v);
+  expect(await waitFor(async () => (await page.evaluate((k) => JSON.parse(localStorage.getItem(k)).global.micDevice, KEY)) === other.v, 3000), '選んだマイクが保存されない');
+  expect(await waitFor(micOn, 5000), `選んだあとマイクで聞かない: ${await text('.mic-status')}`);
+  expect(await waitFor(async () => /が聞こえています/.test((await text('.mic-say')) || ''), 8000), '選んだマイクで音が聞こえない');
+  // 外したマイク（無い id）が保存されていても、いつものマイクで聞く
+  await open('#/settings', { global: global({ micDevice: 'no-such-device' }) });
+  expect(await waitFor(micOn, 5000), `無いマイクのとき聞かない: ${await text('.mic-status')}`);
+  expect((await page.$eval('select.mic-device', (e) => e.value)) === '', '無いマイクのとき「いつものマイク」にならない');
 });
 
 await scenario('ゲーム中、上の帯にマイクの印が出て、聞こえた音名が出る', async () => {
@@ -246,7 +264,6 @@ await scenario('オフにするとメーターと楽器の選択が消え、設�
 });
 
 // ---- マイクの感度 ----
-const micOn = async () => /マイクで聞いています/.test((await text('.mic-status')) || '');
 const floorAt = () => page.$eval('.mic-floor', (e) => parseFloat(e.style.left));
 // メーターは -60〜0 dB を 0〜100%。下限 0.004（ふつう）は 20.1%、0.0126（とても低い）は 36.7%、0.00126（とても高い）は 3.4%
 const nearPct = (a, b) => Math.abs(a - b) < 0.5;

@@ -31,6 +31,7 @@ let zeroSince = null; // マイクから届く波形が 0 ばかりになった�
 const NO_SIGNAL_SEC = 1.5;
 const statusFns = new Set();
 const levelFns = new Set();
+const deviceFns = new Set();
 
 /** いまの感度の下限（rms）。これより小さい音は無音とみなす */
 export const micFloor = () => sensFloor(globalSettings().micSens);
@@ -84,11 +85,19 @@ async function open() {
     return;
   }
   let s;
+  // 選んだマイクがあれば、それを使う（見つからなければ、いつものマイクに戻す）
+  const pick = globalSettings().micDevice;
+  const ask = (id) => navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, ...(id ? { deviceId: { exact: id } } : {}) },
+    video: false,
+  });
   try {
-    s = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-      video: false,
-    });
+    try {
+      s = await ask(pick);
+    } catch (e) {
+      if (!pick || !['OverconstrainedError', 'NotFoundError'].includes(e?.name)) throw e;
+      s = await ask('');
+    }
   } catch (e) {
     const name = e?.name || '';
     if (name === 'NotAllowedError' || name === 'SecurityError') state = 'denied';
@@ -179,7 +188,7 @@ export function hearing(info, naming) {
   if (info.noSignal) {
     return {
       kind: 'nosignal', short: '無音',
-      long: 'マイクから音がまったく届いていません。Mac なら、システム設定の「プライバシーとセキュリティ」→「マイク」でこのブラウザがオンか、「サウンド」→「入力」で使うマイクが選ばれているかを確かめてください',
+      long: 'マイクから音がまったく届いていません。設定の画面の「使うマイク」で別のマイク（MacBook のマイクなど）を選んでみてください。Mac なら、システム設定の「プライバシーとセキュリティ」→「マイク」でこのブラウザがオンかも確かめてください',
     };
   }
   if (info.gated) return { kind: 'gated', short: '待', long: 'アプリの音が鳴っているあいだは聞きません' };
@@ -241,6 +250,38 @@ if (typeof document !== 'undefined') {
     if (document.visibilityState !== 'visible' || !wanted || stream || !lostHidden) return;
     lostHidden = false;
     enableMic(true);
+  });
+}
+
+/** 使えるマイクの一覧 [{ id, label }]（マイクを許可したあとでないと、名前が分からないことがある） */
+export async function listMics() {
+  if (!navigator.mediaDevices?.enumerateDevices) return [];
+  const ds = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+  return ds.filter((d) => d.kind === 'audioinput').map((d, i) => ({ id: d.deviceId, label: d.label || `マイク ${i + 1}` }));
+}
+
+/** いま聞いているマイクの id（聞いていなければ ''） */
+export function micDeviceId() {
+  return stream?.getAudioTracks()[0]?.getSettings?.().deviceId ?? '';
+}
+
+/** 使うマイクを変えたとき：聞いているなら、つなぎ直す */
+export async function reopenMic() {
+  if (!wanted) return micStatus();
+  close();
+  state = 'off';
+  notify();
+  return enableMic(true);
+}
+
+/** マイクの抜き差しなどで、使えるマイクが変わったら fn() */
+export function onMicDevices(fn, life) {
+  deviceFns.add(fn);
+  life?.signal.addEventListener('abort', () => deviceFns.delete(fn), { once: true });
+}
+if (typeof navigator !== 'undefined' && navigator.mediaDevices?.addEventListener) {
+  navigator.mediaDevices.addEventListener('devicechange', () => {
+    for (const fn of [...deviceFns]) fn();
   });
 }
 

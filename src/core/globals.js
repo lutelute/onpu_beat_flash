@@ -12,6 +12,7 @@ export const GLOBAL_DEFAULTS = {
   micInstrument: 'any',
   micSens: 3, // ふつう（今までと同じ聞こえ方）
   micPhones: false,
+  micDevice: '', // 使うマイク（機器の id。空ならいつものマイク＝OS の設定に合わせる）。設定の画面のマイクの欄で選ぶ
   theme: 'auto',
 };
 

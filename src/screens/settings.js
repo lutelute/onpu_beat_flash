@@ -6,7 +6,7 @@ import { globalFields } from '../core/globals.js';
 import { setVolume, playEvents } from '../render/audio.js';
 import { applyTheme } from '../ui/theme.js';
 import { enableMidi, midiStatus, onMidiStatus, onMidiNote } from '../ui/midi.js';
-import { enableMic, micStatus, onMicStatus, onMicLevel, micFloor, measureRoom, hearing } from '../ui/mic.js';
+import { enableMic, micStatus, onMicStatus, onMicLevel, micFloor, measureRoom, hearing, listMics, micDeviceId, reopenMic, onMicDevices } from '../ui/mic.js';
 import { midiLabel } from '../core/music.js';
 import { pickSens, micSens } from '../core/pitch.js';
 
@@ -105,6 +105,29 @@ function micPanel(life, onPick) {
   }, '周りの音を測る');
   const calibRow = h('div', { class: 'mic-calib', hidden: true }, calib, said);
 
+  // 使うマイク（Teams などの、ふだんは音の出ない入力が選ばれていると、音がまったく届かない）
+  const pickMic = h('select', {
+    class: 'mic-device', 'aria-label': '使うマイク',
+    onchange: async () => {
+      setGlobal({ micDevice: pickMic.value });
+      await reopenMic();
+      if (life.alive) fillMics();
+    },
+  });
+  const deviceRow = h('label', { class: 'mic-device-row', hidden: true }, h('span', { class: 'field-label' }, '使うマイク'), pickMic);
+  async function fillMics() {
+    const list = await listMics();
+    if (!life.alive) return;
+    const saved = globalSettings().micDevice;
+    const now = micDeviceId();
+    const opts = [{ id: '', label: 'いつものマイク（端末の設定に合わせる）' }, ...list.filter((d) => d.id && d.id !== 'default')];
+    pickMic.replaceChildren(...opts.map((d) => h('option', { value: d.id }, d.label)));
+    // 選んだマイクが見つからない（外した）ときは「いつもの」を選んだ形に
+    pickMic.value = opts.some((d) => d.id === saved) ? saved : '';
+    pickMic.title = now ? `いま聞いているマイク: ${list.find((d) => d.id === now)?.label ?? now}` : '';
+  }
+  onMicDevices(fillMics, life);
+
   const show = (st) => {
     const on = globalSettings().mic;
     line.textContent = on ? st.text : '';
@@ -112,6 +135,8 @@ function micPanel(life, onPick) {
     meter.hidden = !working;
     say2.hidden = !working;
     calibRow.hidden = !working;
+    deviceRow.hidden = !working;
+    if (working) fillMics();
     if (!working) say('');
   };
   let shown = '—';
@@ -131,5 +156,5 @@ function micPanel(life, onPick) {
   }, life);
   show(micStatus());
   onMicStatus(show, life);
-  return { el: h('div', {}, line, meter, say2, calibRow), show, said: say };
+  return { el: h('div', {}, line, deviceRow, meter, say2, calibRow), show, said: say };
 }
