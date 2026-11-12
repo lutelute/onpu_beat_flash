@@ -56,7 +56,10 @@ writeWav(wav, [60, 64, 67]);
 // 小さな音：大きさ（rms）は鳴り始めで 0.0075、消える前で 0.005。感度「ふつう」の下限 0.004 より大きく、
 // 「とても低い」の下限 0.0126 より小さい
 const quietWav = join(work, 'ceg-quiet.wav');
+// 音がまったく来ないマイク（波形が 0 ばかり。OS でマイクが切られているときと同じ）
+const silentWav = join(work, 'silent.wav');
 writeWav(quietWav, [60, 64, 67], { amp: 0.0078 });
+writeWav(silentWav, []);
 
 // 開発中のフォルダ（dist）を書き換えないよう、別のところへビルドする
 const outDir = join(work, 'dist');
@@ -154,6 +157,31 @@ await scenario('設定画面のメーターに、聞こえた音名（ド・ミ�
   for (const n of ['ド（C4）', 'ミ（E4）', 'ソ（G4）']) expect(seen.has(n), `${n} が出ない（出たもの: ${[...seen].join(' ')}）`);
   const other = [...seen].filter((n) => !['ド（C4）', 'ミ（E4）', 'ソ（G4）', '—'].includes(n));
   expect(!other.length, `鳴らしていない音が出た: ${other.join(' ')}`);
+});
+
+await scenario('マイクの様子は「マイクで答える」のすぐ下に出て、聞こえ方を言葉で知らせる', async () => {
+  await open('#/settings', { global: global() });
+  expect(await waitFor(async () => /マイクで聞いています/.test((await text('.mic-status')) || '')), 'マイクがオンにならない');
+  // メーターは、マイクの項目（オン・オフ）と楽器の選択のあいだにある
+  const order = await page.evaluate(() => {
+    const meter = document.querySelector('.mic-meter');
+    const inst = document.querySelector('[data-fk="micInstrument"]');
+    const toggle = document.querySelector('[data-fk="mic"]');
+    const before = (a, b) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    return { afterToggle: before(toggle, meter), beforeInst: before(meter, inst) };
+  });
+  expect(order.afterToggle && order.beforeInst, `メーターの場所: ${JSON.stringify(order)}`);
+  expect(await waitFor(async () => /が聞こえています/.test((await text('.mic-say')) || ''), 8000), `聞こえ方の言葉が出ない: ${await text('.mic-say')}`);
+  // MIDI がオフなら、マイクで聞こえた音を MIDI の「受け取った音」には出さない
+  expect(await page.$eval('.midi-note', (e) => e.hidden), 'MIDI がオフなのに受け取った音が出る');
+});
+
+await scenario('ゲーム中、上の帯にマイクの印が出て、聞こえた音名が出る', async () => {
+  await open('#/game/quick', { global: global(), mode: { quick: { length: 'count20', feedback: 'fast' } } });
+  await page.click('.actions.sticky .btn.primary');
+  expect(await waitFor(async () => !!(await page.$('.runbar .micbadge:not([hidden])')), 8000), 'マイクの印が出ない');
+  expect(await waitFor(async () => (await page.$eval('.runbar .micbadge', (e) => e.dataset.kind)) === 'heard', 8000), `聞こえた音が出ない: ${await page.$eval('.runbar .micbadge', (e) => e.textContent)}`);
+  expect(/[ドミソ]/.test(await page.$eval('.runbar .micbadge', (e) => e.textContent)), '音名が出ない');
 });
 
 await scenario('アプリの音が鳴っているあいだは聞かない', async () => {
@@ -275,6 +303,18 @@ await scenario('小さな音は、感度「ふつう」なら聞こえ、「と�
   await sleep(300);
   const low = await collectMeter();
   expect(low.size === 1 && low.has('—'), `とても低いでも聞こえた: ${[...low].join(' ')}`);
+});
+
+await browser.close();
+await launch(silentWav);
+await scenario('マイクから音がまったく届かないと（OS でマイクが切られているなど）、そう知らせる', async () => {
+  await open('#/settings', { global: global() });
+  expect(await waitFor(micOn), 'マイクがオンにならない');
+  expect(await waitFor(async () => (await text('.mic-note')) === '音なし', 6000), `表示: ${await text('.mic-note')}`);
+  expect(/届いていません/.test((await text('.mic-say')) || ''), `説明: ${await text('.mic-say')}`);
+  await open('#/game/quick', { global: global(), mode: { quick: { length: 'count20', feedback: 'fast' } } });
+  await page.click('.actions.sticky .btn.primary');
+  expect(await waitFor(async () => (await page.$eval('.runbar .micbadge', (e) => e.dataset.kind).catch(() => '')) === 'nosignal', 6000), 'ゲーム中の印が「無音」にならない');
 });
 
 // ------------------------------------------------------------

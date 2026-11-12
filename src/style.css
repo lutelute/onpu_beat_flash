@@ -567,7 +567,7 @@ body[data-phase='run'] .stage-wrap.battle { flex: 1 1 auto; margin-block: 0; min
 /* ---- マイク ---- */
 .mic-status { margin-top: 10px; }
 .mic-meter { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
-.mic-track { position: relative; flex: 1; min-width: 0; height: 10px; border-radius: 99px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; }
+.mic-track { position: relative; flex: 1; min-width: 0; height: 16px; border-radius: 99px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; }
 .mic-bar { display: block; width: 0; height: 100%; background: var(--sub); transition: width 0.06s linear; }
 .mic-floor { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--ink); opacity: 0.35; }
 .mic-meter.loud .mic-bar { background: var(--accent); }
@@ -575,6 +575,21 @@ body[data-phase='run'] .stage-wrap.battle { flex: 1 1 auto; margin-block: 0; min
 .mic-meter.gated .mic-bar { background: var(--line); }
 .mic-note { flex: none; min-width: 7.5em; font-size: 15px; font-weight: 800; color: var(--ink); white-space: nowrap; }
 .mic-meter.gated .mic-note, .mic-meter:not(.heard) .mic-note { color: var(--sub); font-weight: 600; }
+.mic-meter[data-kind='paused'] .mic-note, .mic-meter[data-kind='nosignal'] .mic-note { color: var(--ng); }
+.mic-say { margin-top: 4px; min-height: 1.6em; }
+/* ゲーム中のマイクの印（上の帯）：音の大きさの短い棒と、聞こえた音名 */
+.micbadge { display: inline-flex; align-items: center; gap: 6px; flex: none; padding: 3px 9px 3px 7px; border-radius: 99px; border: 1px solid var(--line); background: var(--surface); font-size: 13px; font-weight: 800; line-height: 1.4; white-space: nowrap; }
+.runbar .progress + .micbadge { margin-left: auto; }
+.micbadge svg { width: 15px; height: 15px; flex: none; }
+.micbadge .mb-track { width: 30px; height: 6px; border-radius: 99px; background: var(--surface-2); overflow: hidden; flex: none; }
+.micbadge .mb-bar { display: block; width: 0; height: 100%; background: var(--sub); transition: width 0.06s linear; }
+.micbadge .mb-text { min-width: 2.2em; text-align: center; }
+.micbadge[data-kind='loud'] .mb-bar { background: var(--accent); }
+.micbadge[data-kind='heard'] { border-color: var(--ok); color: var(--ok); }
+.micbadge[data-kind='heard'] .mb-bar { background: var(--ok); }
+.micbadge[data-kind='quiet'], .micbadge[data-kind='gated'] { color: var(--sub); }
+.micbadge:is([data-kind='paused'], [data-kind='nosignal'], [data-kind='off']) { border-color: var(--ng); color: var(--ng); }
+@media (max-width: 380px) { .micbadge .mb-track { display: none; } }
 /* 横向きのスマホなど、背の低い画面では戦場を縮めて、答えるところを画面の中に残す */
 @media (max-height: 520px) { body[data-phase='run'] .stage-wrap.battle { min-height: 150px; } }
 /* PC：上からは縦長、四方からは正方形に近い戦場にする（広すぎると敵が小さく、視線の動きが増える） */

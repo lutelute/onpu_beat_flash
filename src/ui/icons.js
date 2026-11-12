@@ -31,6 +31,7 @@ const DRAW = {
   // i
   about: () => svg(`<circle cx="24" cy="24" r="16"/><circle cx="24" cy="16.5" r="2.2" fill="currentColor" stroke="none"/><path d="M24 22 V33"/>`),
   // 人（アカウント）
+  mic: () => svg(`<rect x="18" y="6" width="12" height="22" rx="6"/><path d="M11 22 a13 13 0 0 0 26 0 M24 35 v7 M17 42 h14"/>`),
   account: () => svg(`<circle cx="24" cy="17" r="7.5"/><path d="M9 41 C9 31.5 15.5 27.5 24 27.5 C32.5 27.5 39 31.5 39 41"/>`),
   // メトロノーム（リズム練習）
   tap: () => svg(`<path d="M17 41 L21 8 H27 L31 41 Z"/><path d="M12 41 H36"/><path d="M24 33 L35 14" stroke-width="2.8"/><circle cx="31.6" cy="19.8" r="2.6" fill="currentColor" stroke="none"/>`),

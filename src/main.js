@@ -18,6 +18,7 @@ import { initAccount, account, onAccount } from './account/account.js';
 import { icon } from './ui/icons.js';
 import { globalSettings } from './core/store.js';
 import { setVolume, stopAll, ensureAudio, audioRunning } from './render/audio.js';
+import { makeMicBadge } from './ui/micBadge.js';
 import { applyTheme } from './ui/theme.js';
 import { enableMidi } from './ui/midi.js';
 import { rememberGame } from './screens/home.js';
@@ -41,6 +42,15 @@ showPerson(account());
 onAccount(showPerson);
 const main = h('main', { id: 'main', tabindex: '-1' });
 app.replaceChildren(h('header', { class: 'top' }, h('div', { class: 'top-inner' }, back, title, person, gear)), main);
+
+// ゲーム中、上の帯にマイクの印を出す（マイクがオンのとき。オトバトルは砲台のそばに出るので除く）
+const micBadge = makeMicBadge();
+new MutationObserver(() => {
+  const bar = main.querySelector('.runbar:not(.battlebar)');
+  if (!bar || micBadge.el.parentNode === bar) return;
+  micBadge.refresh();
+  bar.insertBefore(micBadge.el, bar.querySelector(':scope > .btn'));
+}).observe(main, { childList: true, subtree: true });
 
 const g = globalSettings();
 setVolume(g.volume);

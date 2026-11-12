@@ -6,7 +6,7 @@ import { globalFields } from '../core/globals.js';
 import { setVolume, playEvents } from '../render/audio.js';
 import { applyTheme } from '../ui/theme.js';
 import { enableMidi, midiStatus, onMidiStatus, onMidiNote } from '../ui/midi.js';
-import { enableMic, micStatus, onMicStatus, onMicLevel, micFloor, measureRoom } from '../ui/mic.js';
+import { enableMic, micStatus, onMicStatus, onMicLevel, micFloor, measureRoom, hearing } from '../ui/mic.js';
 import { midiLabel } from '../core/music.js';
 import { pickSens, micSens } from '../core/pitch.js';
 
@@ -21,7 +21,7 @@ export function mountSettings(root, { life }) {
   showMidi(midiStatus());
   onMidiStatus(showMidi, life);
   onMidiNote(life, (m) => {
-    if (!globalSettings().midi && !globalSettings().mic) return;
+    if (!globalSettings().midi) return; // マイクで聞こえた音は、マイクの項目の下のメーターに出る
     midiNote.hidden = false;
     midiNote.textContent = `受け取った音: ${midiLabel(m, globalSettings().naming)}（MIDI ${m}）`;
   });
@@ -35,8 +35,6 @@ export function mountSettings(root, { life }) {
     if (v.mic !== old.mic) enableMic(v.mic).then(mic.show);
     if (v.micSens !== old.micSens) mic.said('');
   };
-  const makeForm = () => settingsForm({ fields: globalFields, values: globalSettings(), onChange });
-  let form = makeForm();
   // 「周りの音を測る」で感度を選んだ：保存して、設定の札も選び直した形で作り直す
   const mic = micPanel(life, (step) => {
     setGlobal({ micSens: step });
@@ -44,12 +42,13 @@ export function mountSettings(root, { life }) {
     form.replaceWith(fresh);
     form = fresh;
   });
+  // MIDI とマイクの様子は、それぞれをオンにする項目のすぐ下に出す（オンにしたところで、届いているか分かるように）
+  const midiBox = h('div', { class: 'device-box' }, midiLine, midiNote);
+  const makeForm = () => settingsForm({ fields: globalFields, values: globalSettings(), onChange, after: { midi: midiBox, mic: mic.el } });
+  let form = makeForm();
   root.replaceChildren(
     h('section', { class: 'card' },
-      form,
-      midiLine,
-      midiNote,
-      mic.el),
+      form),
     h('p', { class: 'field-note center' }, 'ゲームごとの設定（音部記号・範囲・速さなど）は、それぞれのゲームの始める前の画面で変えられます。'),
   );
 }
@@ -69,6 +68,8 @@ function micPanel(life, onPick) {
   const bar = h('span', { class: 'mic-bar' });
   const floorLine = h('span', { class: 'mic-floor' });
   const note = h('span', { class: 'mic-note' }, '—'); // 最初の知らせ（20 ms 後）までも「聞こえていない」の印
+  // 聞こえ方を言葉で（静か・音が聞こえている・〇〇が聞こえている・音が止まっている・音が届いていない）
+  const say2 = h('div', { class: 'field-note mic-say' }, '');
   const meter = h('div', { class: 'mic-meter', hidden: true },
     h('span', { class: 'mic-track', 'aria-hidden': 'true' }, bar, floorLine),
     note);
@@ -109,20 +110,26 @@ function micPanel(life, onPick) {
     line.textContent = on ? st.text : '';
     const working = on && st.state === 'on';
     meter.hidden = !working;
+    say2.hidden = !working;
     calibRow.hidden = !working;
     if (!working) say('');
   };
   let shown = '—';
-  onMicLevel(({ level, midi, gated, floor: f }) => {
+  let told = '';
+  onMicLevel((info) => {
+    const { level, midi, gated, floor: f } = info;
     setFloor(f);
     bar.style.width = `${pos(level)}%`;
     meter.classList.toggle('loud', level >= f);
     meter.classList.toggle('heard', midi != null);
     meter.classList.toggle('gated', gated);
-    const text = gated ? 'アプリの音' : midi != null ? midiLabel(midi, globalSettings().naming) : '—';
+    const hr = hearing(info, globalSettings().naming);
+    meter.dataset.kind = hr.kind;
+    const text = gated ? 'アプリの音' : midi != null ? midiLabel(midi, globalSettings().naming) : hr.kind === 'paused' || hr.kind === 'nosignal' ? '音なし' : '—';
     if (text !== shown) note.textContent = shown = text;
+    if (hr.long !== told) say2.textContent = told = hr.long;
   }, life);
   show(micStatus());
   onMicStatus(show, life);
-  return { el: h('div', {}, line, meter, calibRow), show, said: say };
+  return { el: h('div', {}, line, meter, say2, calibRow), show, said: say };
 }

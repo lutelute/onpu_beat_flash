@@ -42,7 +42,7 @@ export const globalFields = () => [
   {
     key: 'micSens', type: 'segmented', label: 'マイクの感度', show: (s) => s.mic,
     options: MIC_SENS.map(({ id, label }) => ({ id, label })),
-    note: '弾いていないのに音が出るときは低く、小さな音や離れた音を拾わないときは高くします。下の「周りの音を測る」で、部屋に合わせて選ぶこともできます',
+    note: '弾いていないのに音が出るときは低く、小さな音や離れた音を拾わないときは高くします。「マイクで答える」の下の「周りの音を測る」で、部屋に合わせて選ぶこともできます',
   },
   {
     key: 'micPhones', type: 'toggle', label: 'イヤホンで聞いている（アプリの音のあいだもマイクを止めない）',

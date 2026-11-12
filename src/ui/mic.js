@@ -7,6 +7,7 @@
 import { ensureAudio, audioNow, audioQuietAt } from '../render/audio.js';
 import { emitNote } from './midi.js';
 import { globalSettings } from '../core/store.js';
+import { midiLabel } from '../core/music.js';
 import { rms, detectPitch, makeNoteTracker, micInstrument, writtenNote, MIC_FLOOR, sensFloor, micTracker } from '../core/pitch.js';
 
 const POLL_MS = 20;
@@ -26,6 +27,8 @@ let inst = globalSettings().micInstrument; // 同じく楽器（声は落ち着�
 let tracker = makeNoteTracker(micTracker(sens, inst));
 let measure = null; // 周りの音を測っているあいだ { levels, need, done }
 let lostHidden = false; // 裏に回っているあいだにマイクが切れた（iPhone・iPad）
+let zeroSince = null; // マイクから届く波形が 0 ばかりになった時刻（OS でマイクが切られている・音の出ない機器を選んでいる）
+const NO_SIGNAL_SEC = 1.5;
 const statusFns = new Set();
 const levelFns = new Set();
 
@@ -42,7 +45,9 @@ export function micStatus() {
       : { state: 'unsupported', text: 'このブラウザではマイクが使えません' };
   }
   if (state === 'on') return { state, text: `マイクで聞いています${label ? `（${label}）` : ''}` };
-  if (state === 'denied') return { state, text: 'マイクが許可されていません。アドレス欄のそばにあるサイトの設定から、このページのマイクを許可してください' };
+  if (state === 'denied') {
+    return { state, text: 'マイクが許可されていません。アドレス欄のそばにあるサイトの設定から、このページのマイクを許可してください。Mac では、システム設定の「プライバシーとセキュリティ」→「マイク」で、このブラウザもオンにしてください' };
+  }
   if (state === 'error') return { state, text: why || 'マイクを使えませんでした' };
   return { state: 'off', text: opening ? 'マイクの使用を許可してください…' : '' };
 }
@@ -151,15 +156,39 @@ function close() {
   if (stream) for (const t of stream.getTracks()) t.stop();
   stream = null;
   label = '';
+  zeroSince = null;
   tracker.reset();
   measure?.done();
   sendLevel(0, null, false);
 }
 
-function sendLevel(level, midi, gated) {
+/** extra：paused（ブラウザが音を止めている。画面に触れると動く）・noSignal（マイクから音がまったく届かない） */
+function sendLevel(level, midi, gated, extra = {}) {
   if (!levelFns.size) return;
-  const info = { level, midi, gated, floor: sensFloor(sens) };
+  const info = { level, midi, gated, floor: sensFloor(sens), paused: false, noSignal: false, ...extra };
   for (const fn of levelFns) fn(info);
+}
+
+/**
+ * 聞こえ方の一言（設定のメーターと、ゲーム中のマイクの印で使う）
+ * @param info onMicLevel で受け取ったもの
+ * @returns {{ kind: string, short: string, long: string }} kind：paused・nosignal・gated・heard・loud・quiet
+ */
+export function hearing(info, naming) {
+  if (info.paused) return { kind: 'paused', short: '止', long: '音が止まっています。画面のどこかをクリック（タップ）すると聞き始めます' };
+  if (info.noSignal) {
+    return {
+      kind: 'nosignal', short: '無音',
+      long: 'マイクから音がまったく届いていません。Mac なら、システム設定の「プライバシーとセキュリティ」→「マイク」でこのブラウザがオンか、「サウンド」→「入力」で使うマイクが選ばれているかを確かめてください',
+    };
+  }
+  if (info.gated) return { kind: 'gated', short: '待', long: 'アプリの音が鳴っているあいだは聞きません' };
+  if (info.midi != null) {
+    const name = midiLabel(info.midi, naming);
+    return { kind: 'heard', short: name, long: `${name} が聞こえています` };
+  }
+  if (info.level >= info.floor) return { kind: 'loud', short: '♪', long: '音は聞こえています。高さを調べています（同じ高さで少し伸ばしてください）' };
+  return { kind: 'quiet', short: '—', long: '静かです。弾くか歌うと、ここに音名が出ます' };
 }
 
 function poll() {
@@ -173,7 +202,7 @@ function poll() {
     tracker.reset(true);
   }
   const { ac, analyser, buf } = nodes;
-  if (ac.state !== 'running') return sendLevel(0, null, false); // 画面に触れるまで音は動かない
+  if (ac.state !== 'running') return sendLevel(0, null, false, { paused: true }); // 画面に触れるまで音は動かない
   if (analyser.getFloatTimeDomainData) analyser.getFloatTimeDomainData(buf);
   else {
     // 古い Safari
@@ -183,6 +212,10 @@ function poll() {
   }
   const t = audioNow();
   const level = rms(buf);
+  // 波形が 0 ばかり（どんな静かな部屋でも、マイクには少しは音が入る）
+  if (level < 1e-6) zeroSince ??= t;
+  else zeroSince = null;
+  const noSignal = zeroSince != null && t - zeroSince >= NO_SIGNAL_SEC;
   const quiet = t >= audioQuietAt();
   // 周りの音を測っているあいだは、アプリの音が鳴っていない枚だけを集める（イヤホンでも、もれた音を数えないように）
   if (measure && quiet) {
@@ -193,13 +226,13 @@ function poll() {
   if (!quiet && !g.micPhones) {
     // アプリの音が鳴っている。鳴り終わったときに残っている音（その残りや、伸ばしたままの音）も新しい音と数えない
     tracker.reset(true);
-    return sendLevel(level, null, true);
+    return sendLevel(level, null, true, { noSignal });
   }
   // 選んだ楽器の音域（minFreq・maxFreq）の中だけで当てる。ゲームと設定画面には楽譜に書く高さで渡す
   const p = level >= sensFloor(sens) ? detectPitch(buf, ac.sampleRate, micInstrument(g.micInstrument)) : null;
   const m = tracker.feed({ t, level, freq: p ? p.freq : null });
   if (m != null) emitNote(writtenNote(m, g.micInstrument));
-  sendLevel(level, writtenNote(tracker.note, g.micInstrument), false);
+  sendLevel(level, writtenNote(tracker.note, g.micInstrument), false, { noSignal });
 }
 
 // 裏に回っているあいだにマイクが切れたら、戻ってきたときにつなぎ直す

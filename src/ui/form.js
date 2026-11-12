@@ -21,8 +21,9 @@ const sameValue = (a, b) =>
  * @param {Array} [o.presets]
  * @param {object} o.values
  * @param {(v)=>void} o.onChange
+ * @param {Object<string, Element>} [o.after] 項目のすぐ下に置くもの（キー → 要素。その項目が出ているときだけ）
  */
-export function settingsForm({ fields, presets, values, onChange }) {
+export function settingsForm({ fields, presets, values, onChange, after = {} }) {
   const root = h('div', { class: 'form' });
   let v = { ...values };
   const set = (patch) => {
@@ -46,6 +47,7 @@ export function settingsForm({ fields, presets, values, onChange }) {
     for (const f of fields(v)) {
       if (f.show && !f.show(v)) continue;
       root.append(wrap(f, control(f)));
+      if (after[f.key]) root.append(after[f.key]);
     }
     if (keep?.fk) {
       const sel = `[data-fk="${CSS.escape(keep.fk)}"]${keep.oid ? `[data-oid="${CSS.escape(keep.oid)}"]` : ''}`;
