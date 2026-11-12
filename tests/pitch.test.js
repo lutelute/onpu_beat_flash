@@ -252,6 +252,37 @@ test('すぐ消える音（拍子木のような音とその残り）は数え�
   assert.deepEqual(midis(track(sig)), []);
 });
 
+// ピアノの高い音：はじめの音はすぐ小さくなり、あとに残る音（山の 2 割くらいまで）は弦どうしのずれで「うなり」、
+// 打ち消し合うところでは下限を下回ってから、ゆっくり戻る（アイオワ大学のピアノの録音で、ラ5・ミ♭5・ファ6 がこうなる）
+const pianoHigh = (t) => 0.8 * Math.exp(-t / 0.08) + 0.2 * Math.exp(-t / 1.5) * Math.abs(Math.cos(2 * Math.PI * 1.4 * t + 0.4));
+
+test('ピアノの高い音のうなり（小さくなってはゆっくり戻る・下限を下回ってまた戻る）は 1 回', () => {
+  for (const m of [72, 81, 89]) {
+    const ev = track(render([{ midi: m, t0: 0.1, t1: 2.2, env: pianoHigh, amp: 0.12 }], 2.6));
+    assert.deepEqual(midis(ev), [m], `MIDI ${m}`);
+  }
+});
+
+test('うなりのあるピアノの音でも、鍵盤を離して弾き直せば 2 回', () => {
+  const sig = render([{ midi: 81, t0: 0.1, t1: 0.5, env: pianoHigh, amp: 0.12 }, { midi: 81, t0: 0.6, t1: 1.3, env: pianoHigh, amp: 0.12 }], 1.7);
+  assert.deepEqual(midis(track(sig)), [81, 81]);
+});
+
+test('ピアノのいちばん上のあたり（0.1 秒たらずで半分になる音）も数える（拍子木の音は数えない）', () => {
+  const quick = (t) => Math.exp(-t / 0.07);
+  for (const m of [84, 89]) assert.deepEqual(midis(track(render([{ midi: m, t0: 0.1, t1: 0.8, env: quick, amp: 0.2 }], 1.2))), [m], `MIDI ${m}`);
+});
+
+test('低い音が鳴っている途中から高い音を弾き、低い音を離しても、高い音を数える', () => {
+  // ピアノのように、低い音（ド3）は少しずつ小さくなり、高い音（ファ6）を弾いた 60 ms あとに離す
+  const quick = (t) => Math.exp(-t / 0.07);
+  const piano = (t) => Math.exp(-t / 0.4);
+  for (const [lo, hi] of [[48, 89], [43, 84], [55, 81]]) {
+    const sig = render([{ midi: lo, t0: 0.1, t1: 0.66, env: piano, amp: 0.12 }, { midi: hi, t0: 0.6, t1: 1.2, env: quick, amp: 0.2 }], 1.5);
+    assert.deepEqual(midis(track(sig)), [lo, hi], `${lo} → ${hi}`);
+  }
+});
+
 test('reset(true) のあとは、鳴り続けている音を新しい音と数えない', () => {
   const sig = render([{ midi: 60, t0: 0.1, t1: 1.0, env: () => 1 }, { midi: 64, t0: 1.0, t1: 1.4, env: () => 1 }], 1.8);
   const tr = makeNoteTracker();

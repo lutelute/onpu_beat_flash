@@ -49,11 +49,11 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => appl
 if (g.midi) enableMidi(true);
 if (g.mic) enableMic(true);
 // 操作のたびに音を起こす（ブラウザは操作の前に音を出させない。iPhone は touchend・click で起きる）
-// 音が動き出したら見張るのをやめる
+// 動き出したあとも見張りは外さない。iPhone・iPad は、ほかのアプリから戻ると音が止まっていることがあり、
+// 次に触れたときに起こし直す（動いているあいだは何もしない）
 const UNLOCK = ['pointerdown', 'touchend', 'click', 'keydown'];
 const unlock = () => {
-  ensureAudio();
-  if (audioRunning()) for (const type of UNLOCK) window.removeEventListener(type, unlock, true);
+  if (!audioRunning()) ensureAudio();
 };
 for (const type of UNLOCK) window.addEventListener(type, unlock, true);
 

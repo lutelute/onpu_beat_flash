@@ -42,8 +42,16 @@ export async function enableMidi(on) {
   return midiStatus();
 }
 
+/** iPhone・iPad か（iPad の Safari は Mac のふりをするので、触れる画面の Mac も iPad とみなす） */
+const isIOS = () =>
+  typeof navigator !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+
 export function midiStatus() {
-  if (!midiSupported()) return { state: 'unsupported', text: 'このブラウザは MIDI に対応していません（Chrome・Edge で使えます）' };
+  if (!midiSupported()) {
+    return isIOS()
+      ? { state: 'unsupported', text: 'iPhone・iPad では MIDI 鍵盤は使えません（どのブラウザも Safari と同じしくみで、MIDI に対応していません）。マイクで答えられます' }
+      : { state: 'unsupported', text: 'このブラウザは MIDI に対応していません（Chrome・Edge で使えます）' };
+  }
   if (!access) return { state: 'off', text: '' };
   const names = [...access.inputs.values()].map((i) => i.name).filter(Boolean);
   return names.length

@@ -24,6 +24,7 @@ let label = '';
 let sens = globalSettings().micSens; // いまの音の区切り（tracker）を作ったときの感度
 let tracker = makeNoteTracker(sensTracker(sens));
 let measure = null; // 周りの音を測っているあいだ { levels, need, done }
+let lostHidden = false; // 裏に回っているあいだにマイクが切れた（iPhone・iPad）
 const statusFns = new Set();
 const levelFns = new Set();
 
@@ -122,8 +123,10 @@ function start(ac, s) {
   track?.addEventListener('ended', () => {
     if (stream !== s) return;
     close();
+    // iPhone・iPad は、ほかのアプリに切り替えるとマイクを切ることがある。そのときは戻ってきたらつなぎ直す
+    lostHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
     state = 'error';
-    why = 'マイクが外れました。つなぎ直してから、もう一度オンにしてください';
+    why = lostHidden ? 'マイクが切れました。この画面に戻ると、つなぎ直します' : 'マイクが外れました。つなぎ直してから、もう一度オンにしてください';
     notify();
   });
   timer = setInterval(poll, POLL_MS);
@@ -194,6 +197,15 @@ function poll() {
   const m = tracker.feed({ t, level, freq: p ? p.freq : null });
   if (m != null) emitNote(writtenNote(m, g.micInstrument));
   sendLevel(level, writtenNote(tracker.note, g.micInstrument), false);
+}
+
+// 裏に回っているあいだにマイクが切れたら、戻ってきたときにつなぎ直す
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || !wanted || stream || !lostHidden) return;
+    lostHidden = false;
+    enableMic(true);
+  });
 }
 
 export function onMicStatus(fn, life) {

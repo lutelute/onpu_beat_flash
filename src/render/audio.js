@@ -157,7 +157,9 @@ export function ensureAudio() {
     master = chain.vol;
     master.gain.value = volume;
   }
-  if (ac.state === 'suspended') ac.resume();
+  // iPhone・iPad では、ほかのアプリに切り替えたり画面を消したりすると 'interrupted'（止められた）になる。
+  // 'suspended' と同じく、操作のときに起こし直す（起こせないときは何もしない）
+  if (ac.state === 'suspended' || ac.state === 'interrupted') ac.resume().catch(() => {});
   return ac;
 }
 
