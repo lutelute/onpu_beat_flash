@@ -190,7 +190,9 @@ export const MIC_INSTRUMENTS = [
   // 書くのは E3〜E7、鳴るのは E2〜E6（24 フレット）。6 弦を D に下げる弾き方（ドロップ D）も入るよう D2 から
   { id: 'guitar', label: 'ギター', ...span(38, 88, 12) },
   { id: 'flute', label: 'フルート', ...span(59, 96) }, // B3（H 足部管）〜C7
-  { id: 'voice', label: '声', ...span(38, 84) }, // D2（バスの低い音）〜C6（ソプラノの高い音）
+  // 声は、歌い始めに下からすくい上げたり、高さが半音の途中で揺れたりするので、同じ高さが 0.15 秒続いてから答える
+  // （男声の録音 67 本で、はじめの答えが正しかったのは 0.05 秒なら 32 本、0.15 秒なら 61 本。答えは 0.16 秒ほど遅くなる）
+  { id: 'voice', label: '声', ...span(38, 84), tracker: { stable: 0.15 } }, // D2（バスの低い音）〜C6（ソプラノの高い音）
 ];
 
 /** id の楽器（知らない id なら「指定なし」）。minFreq・maxFreq はそのまま detectPitch に渡せる */
@@ -232,6 +234,9 @@ export const sensFloor = (step) => MIC_FLOOR * 10 ** (micSens(step).db / 20);
  */
 export const sensTracker = (step) => ({ minLevel: sensFloor(step) });
 
+/** 感度の段と楽器 → makeNoteTracker に渡す値（声だけ、落ち着くまで少し長く待つ） */
+export const micTracker = (step, id) => ({ ...sensTracker(step), ...(micInstrument(id).tracker ?? {}) });
+
 /**
  * 周りの音を測った結果から感度を選ぶ（設定の「周りの音を測る」）
  * levels：アプリの音が鳴っていないあいだの、1 枚ごとの大きさ（rms）。20 ms ごとに 2 秒なら 100 個
@@ -263,6 +268,9 @@ export function pickSens(levels, { pct = 0.9, margin = 2, minCount = 25 } = {}) 
  *     以上の大きさがあるときだけ新しい音（うなりで打ち消し合うところまで下がると、そこからの戻りは「跳ね上がり」に
  *     見えるが、戻っても山の 2 割くらいにしかならない。弾き直せば、たいてい前と同じくらいの大きさになる）
  *   ・ビブラート（±hold 半音まで）・1 枚 2 枚の取りこぼし・1 オクターブの見まちがいは、同じ音のまま
+ *   ・鳴っている音の 3〜6 倍音の高さに移っても、打ち直しがなければ同じ音のまま（チェロの低い弦は、弓を離すときなどに
+ *     基音より 3 倍音のほうが強くなり、そちらを拾うことがある）
+ *   ・高さが一方向に動き続けているあいだ（歌い始めのすくい上げ）は待ち、落ち着いた高さで知らせる（settle 秒まで）
  *   ・すぐ消える音（拍子木のような音とその残響）は知らせない
  *   ・半音に丸めるのは、いちばん近い半音から ±tolerance 以内のときだけ
  * feed({ t: 秒, level: 大きさ, freq: Hz か null }) は、知らせるときだけ MIDI 番号を返す
@@ -282,6 +290,8 @@ export function makeNoteTracker(opts = {}) {
     dip: 0.6, // 弾き直し：いったん山の 0.6 倍まで下がり、
     rise: 1.8, //           そこから 1.8 倍に上がり、
     attack: 2.0, //         しかも直前の 2 枚（約 40 ms）の小さいほうの 2 倍以上に跳ね上がったら（打ち直し）
+    glide: 0.2, // すくい上げ：候補の始めから半音のこれだけ動き、まだ同じ向きに動いていたら待つ
+    settle: 0.5, //   待つのは候補ができてからこの秒数まで（そこからは、その時の高さで知らせる）
     memory: 0.5, // 止んだ音が、この秒数のうちに戻ってきたら、うなりかもしれない
     restrike: 0.35, // 戻ってきた音が、止んだ音の山のこれ倍より小さければ、うなり（同じ音の続き）
     // 知らせる瞬間の大きさが候補の間の最大のこれ倍より小さければ、すぐ消える音（拍子木は 10 ms ほどで半分になる。
@@ -291,7 +301,8 @@ export function makeNoteTracker(opts = {}) {
     ...opts,
   };
   let cur = null; // 鳴っている音（知らせた音か、知らせずに受け入れた音）
-  let cand = null; // 候補 { midi, since, frames, top, over }（over：ほかの音が鳴っている途中から始まった）
+  let cand = null; // 候補 { midi, since, frames, top, over, ms }（over：ほかの音が鳴っている途中から始まった。ms：1 枚ごとの高さ）
+  let curAt = -Infinity; // 鳴っている音を受け入れた時刻
   let lastEmit = -Infinity;
   let lastT = null;
   let quietSince = null;
@@ -305,8 +316,11 @@ export function makeNoteTracker(opts = {}) {
 
   const near = (a, b) => Math.abs(a - b) <= o.hold;
   const sameNote = (m, c) => near(m, c) || near(m, c + 12) || near(m, c - 12);
-  const start = (midi, level) => {
+  const OVERTONES = [19.02, 24, 27.86, 31.02]; // 3〜6 倍音（半音いくつ上か）
+  const overtone = (m, c) => OVERTONES.some((h) => near(m, c + h));
+  const start = (midi, level, t) => {
     cur = midi;
+    curAt = t;
     cand = null;
     peak = level;
     trough = level;
@@ -377,22 +391,38 @@ export function makeNoteTracker(opts = {}) {
     unvoicedSince = null;
 
     const m = freqToMidi(freq);
-    if (cur != null && sameNote(m, cur)) {
-      cand = null; // 鳴っている音のまま
+    if (cur != null && (sameNote(m, cur) || (overtone(m, cur) && attackAt <= curAt))) {
+      cand = null; // 鳴っている音のまま（倍音を拾っただけのときも）
       return null;
     }
     if (cand && near(m, cand.midi)) {
       cand.frames++;
       cand.top = Math.max(cand.top, lv);
+      cand.ms.push(m);
     } else {
       const r = Math.round(m);
       if (Math.abs(m - r) > o.tolerance) {
         cand = null; // 半音と半音のあいだ
         return null;
       }
-      cand = { midi: r, since: t, frames: 1, top: lv, over: cur != null };
+      cand = { midi: r, since: t, frames: 1, top: lv, over: cur != null, ms: [m] };
     }
     if (t - cand.since < o.stable - 1e-9 || cand.frames < o.minFrames) return null;
+    // すくい上げの途中なら待つ。落ち着いたら、いまの高さ（直前の 2 枚）に丸め直す
+    const ms = cand.ms;
+    const k = ms.length;
+    const now = (ms[k - 1] + ms[k - 2]) / 2;
+    const trend = now - (ms[0] + ms[1]) / 2;
+    const step = ms[k - 1] - ms[k - 2];
+    const young = t - cand.since < o.settle - 1e-9;
+    if (young && Math.abs(trend) >= o.glide && Math.sign(step) === Math.sign(trend) && Math.abs(step) >= 0.03) return null;
+    const rr = Math.round(now);
+    if (Math.abs(now - rr) <= o.tolerance) cand.midi = rr;
+    else if (young) return null; // 半音と半音のあいだで止まりかけている。もう少し待つ
+    if (cur != null && sameNote(cand.midi, cur)) {
+      cand = null; // 動いた先が、鳴っている音だった
+      return null;
+    }
     // 止んだばかりの音が、打ち直しなしに（または小さく）戻ってきた（ピアノの高い音のうなり）：知らせずに続きとして受け入れる
     const echo = recent && t - recent.t <= o.memory && sameNote(cand.midi, recent.midi) && (attackAt < recent.t || cand.top < recent.peak * o.restrike);
     // すぐ消える音かどうかは、無音から始まった音だけで見る（前の音が鳴っている途中から始まると、候補の間の最大に
@@ -402,13 +432,13 @@ export function makeNoteTracker(opts = {}) {
       // すぐ消える音・アプリの音の残り・うなりの戻り：知らせずに鳴っている音として受け入れる（その残響も数えない）
       adopt = false;
       const top = echo ? recent.peak : 0;
-      start(cand.midi, lv);
+      start(cand.midi, lv, t);
       peak = Math.max(peak, top); // うなりの戻りは同じ音の続きなので、山の大きさは前の山のまま
       return null;
     }
     if (t - lastEmit < o.minGap - 1e-9) return null; // 次の 1 枚でもう一度
     const midi = cand.midi;
-    start(midi, lv);
+    start(midi, lv, t);
     lastEmit = t;
     return midi;
   }

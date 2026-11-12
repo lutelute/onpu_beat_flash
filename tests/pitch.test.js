@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   rms, freqToMidi, detectPitch, makeNoteTracker, MIC_INSTRUMENTS, micInstrument, writtenNote,
-  MIC_FLOOR, MIC_SENS, micSens, sensFloor, sensTracker, pickSens,
+  MIC_FLOOR, MIC_SENS, micSens, sensFloor, sensTracker, pickSens, micTracker,
 } from '../src/core/pitch.js';
 import { makeRng } from '../src/core/rng.js';
 
@@ -281,6 +281,48 @@ test('低い音が鳴っている途中から高い音を弾き、低い音を�
     const sig = render([{ midi: lo, t0: 0.1, t1: 0.66, env: piano, amp: 0.12 }, { midi: hi, t0: 0.6, t1: 1.2, env: quick, amp: 0.2 }], 1.5);
     assert.deepEqual(midis(track(sig)), [lo, hi], `${lo} → ${hi}`);
   }
+});
+
+// 1 枚ごとの高さ（MIDI 番号の小数）を直に渡して、音の区切りだけを確かめる。pitch(t) が null の枚は高さが分からない
+function feedTrack(tracker, seconds, pitch, level = () => 0.03) {
+  const out = [];
+  for (let t = 0.02; t <= seconds + 1e-9; t += 0.02) {
+    const m = pitch(t);
+    const lv = level(t);
+    const e = tracker.feed({ t, level: lv, freq: m == null ? null : 440 * 2 ** ((m - 69) / 12) });
+    if (e != null) out.push(e);
+  }
+  return out;
+}
+
+test('チェロの低い音：伸ばしている途中で 3 倍音を拾っても（打ち直しがなければ）同じ音のまま', () => {
+  // ド♯2 を伸ばし、弓を離すときに 150 ms だけ 3 倍音（ソ♯3）を拾い、また基音に戻る（アイオワ大学のチェロの録音で起きた）
+  const pitch = (t) => (t < 0.1 ? null : t > 1.3 && t < 1.45 ? 56.05 : 37.05);
+  const level = (t) => (t < 0.1 ? 0.0005 : t < 1.3 ? 0.035 : 0.03 - (t - 1.3) * 0.08);
+  assert.deepEqual(feedTrack(makeNoteTracker(), 1.6, pitch, level), [37]);
+  // 4 倍音（2 オクターブ上）・5 倍音でも同じ
+  for (const h of [24, 27.86]) {
+    const p2 = (t) => (t < 0.1 ? null : t > 1.3 && t < 1.45 ? 37 + h : 37);
+    assert.deepEqual(feedTrack(makeNoteTracker(), 1.6, p2, level), [37], `+${h}`);
+  }
+});
+
+test('声：歌い始めに下からすくい上げても、落ち着いた高さで 1 回だけ答える（楽器を「声」にしたとき）', () => {
+  // 半音 1 つ下から 0.25 秒かけて上がり、少し止まりかけてまた上がる（男声の録音でよくある形）
+  const scoop = (t) => (t < 0.1 ? null : t < 0.35 ? 59.2 + (t - 0.1) * 3 : t < 0.45 ? 59.95 : 60.05);
+  const level = (t) => (t < 0.1 ? 0.0005 : 0.03);
+  assert.deepEqual(feedTrack(makeNoteTracker(micTracker(3, 'voice')), 1.2, scoop, level), [60]);
+  // 「指定なし」は速さを優先する（すくい上げの途中の音を先に答えることがある）
+  assert.equal(micTracker(3, 'any').stable, undefined);
+  assert.equal(micTracker(3, 'voice').stable, 0.15);
+});
+
+test('声：ド〜レ〜ミとつなげて歌っても、1 音ずつ答える。ビブラートは 1 回', () => {
+  const level = (t) => (t < 0.1 ? 0.0005 : 0.03);
+  const legato = (t) => (t < 0.1 ? null : t < 0.6 ? 60 : t < 0.7 ? 60 + (t - 0.6) * 20 : t < 1.2 ? 62 : t < 1.3 ? 62 + (t - 1.2) * 20 : 64);
+  assert.deepEqual(feedTrack(makeNoteTracker(micTracker(3, 'voice')), 1.8, legato, level), [60, 62, 64]);
+  const vibrato = (t) => (t < 0.1 ? null : 67 + 0.4 * Math.sin(2 * Math.PI * 5.5 * t));
+  assert.deepEqual(feedTrack(makeNoteTracker(micTracker(3, 'voice')), 1.5, vibrato, level), [67]);
 });
 
 test('reset(true) のあとは、鳴り続けている音を新しい音と数えない', () => {

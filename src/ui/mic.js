@@ -7,7 +7,7 @@
 import { ensureAudio, audioNow, audioQuietAt } from '../render/audio.js';
 import { emitNote } from './midi.js';
 import { globalSettings } from '../core/store.js';
-import { rms, detectPitch, makeNoteTracker, micInstrument, writtenNote, MIC_FLOOR, sensFloor, sensTracker } from '../core/pitch.js';
+import { rms, detectPitch, makeNoteTracker, micInstrument, writtenNote, MIC_FLOOR, sensFloor, micTracker } from '../core/pitch.js';
 
 const POLL_MS = 20;
 // 感度「ふつう」の下限（今までの値）。いまの下限は micFloor()。これより小さい音は無音とみなす（高さも調べない）
@@ -22,7 +22,8 @@ let state = 'off'; // off | on | denied | error
 let why = '';
 let label = '';
 let sens = globalSettings().micSens; // いまの音の区切り（tracker）を作ったときの感度
-let tracker = makeNoteTracker(sensTracker(sens));
+let inst = globalSettings().micInstrument; // 同じく楽器（声は落ち着くまで少し長く待つ）
+let tracker = makeNoteTracker(micTracker(sens, inst));
 let measure = null; // 周りの音を測っているあいだ { levels, need, done }
 let lostHidden = false; // 裏に回っているあいだにマイクが切れた（iPhone・iPad）
 const statusFns = new Set();
@@ -117,7 +118,8 @@ function start(ac, s) {
   analyser.connect(sink).connect(ac.destination);
   nodes = { ac, source, analyser, sink, buf: new Float32Array(analyser.fftSize), bytes: null };
   sens = globalSettings().micSens;
-  tracker = makeNoteTracker(sensTracker(sens));
+  inst = globalSettings().micInstrument;
+  tracker = makeNoteTracker(micTracker(sens, inst));
   const track = s.getAudioTracks()[0];
   label = track?.label || '';
   track?.addEventListener('ended', () => {
@@ -163,10 +165,11 @@ function sendLevel(level, midi, gated) {
 function poll() {
   if (!nodes) return;
   const g = globalSettings();
-  if (g.micSens !== sens) {
-    // 感度が変わった。音の区切りを新しい下限で作り直す。鳴っている途中で変えても、その音を新しい音と数えない
+  if (g.micSens !== sens || g.micInstrument !== inst) {
+    // 感度か楽器が変わった。音の区切りを作り直す。鳴っている途中で変えても、その音を新しい音と数えない
     sens = g.micSens;
-    tracker = makeNoteTracker(sensTracker(sens));
+    inst = g.micInstrument;
+    tracker = makeNoteTracker(micTracker(sens, inst));
     tracker.reset(true);
   }
   const { ac, analyser, buf } = nodes;
