@@ -110,9 +110,10 @@ src/
   render/
     staff.js         VexFlow で五線と音符を SVG にする
     rhythmScore.js   リズム譜（線 1 本の打楽器譜）と、拍 → 横の位置
-    battleCanvas.js  オトバトルの絵（canvas。下の 3 つを組み合わせて 1 コマを描き、命中・突破などを演出にする）
+    battleCanvas.js  オトバトルの絵（canvas。下の 4 つを組み合わせて 1 コマを描き、命中・突破などを演出にする）
     notation.js      canvas に楽譜を描く（五線・音部記号・全音符・加線・臨時記号。位置の計算はテスト済み）
     battleMonsters.js オトバトルの敵の姿（五線の札を抱えた怪物。表情・まばたき・爪・牙）
+    battleScenery.js オトバトルの景色（面ごとの空・城・森・鍵盤の柱・夕焼け・とげの城・星空、砦の石垣、漂う音符や火の粉）。変わったときだけ描き直す
     glyph.js         Bravura の字形を path にする（DOM なし。アイコン・バナーの書き出しでも使う）
     audio.js         Web Audio のピアノの音（倍音ごとの減衰・弦のずれ・打鍵の音・残響）・メトロノーム
   art/banner.js      バナーの絵（ホームのバナーと書き出す画像で共通）
