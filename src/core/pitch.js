@@ -15,6 +15,8 @@
 // 手間：2048 点なら 4096 点の FFT を往復 1 回（約 5 万回のバタフライ）と、ほかは点の数に比例するだけ。
 // 1 秒に 50 回でも軽い（差の関数を 2 重ループで求める素朴な YIN より何倍も速い）
 
+import { plan, fft } from './fft.js';
+
 /** 波形の大きさ（二乗平均の平方根） */
 export function rms(buf) {
   let s = 0;
@@ -24,55 +26,6 @@ export function rms(buf) {
 
 /** 周波数 → MIDI 番号（小数。69 が A4 = 440 Hz） */
 export const freqToMidi = (f) => 69 + 12 * Math.log2(f / 440);
-
-// ---- FFT（2 の累乗の長さ。表と作業用の配列は長さごとに作っておく） ----
-const plans = new Map();
-function plan(M) {
-  let p = plans.get(M);
-  if (p) return p;
-  const bits = Math.round(Math.log2(M));
-  const rev = new Uint32Array(M);
-  for (let i = 0; i < M; i++) {
-    let r = 0;
-    for (let b = 0, x = i; b < bits; b++, x >>= 1) r = (r << 1) | (x & 1);
-    rev[i] = r;
-  }
-  const cos = new Float64Array(M / 2);
-  const sin = new Float64Array(M / 2);
-  for (let i = 0; i < M / 2; i++) {
-    cos[i] = Math.cos((2 * Math.PI * i) / M);
-    sin[i] = -Math.sin((2 * Math.PI * i) / M);
-  }
-  p = { rev, cos, sin, re: new Float64Array(M), im: new Float64Array(M), x: new Float64Array(M), n: new Float64Array(M) };
-  plans.set(M, p);
-  return p;
-}
-function fft(re, im, { rev, cos, sin }) {
-  const M = re.length;
-  for (let i = 0; i < M; i++) {
-    const j = rev[i];
-    if (j > i) {
-      let t = re[i]; re[i] = re[j]; re[j] = t;
-      t = im[i]; im[i] = im[j]; im[j] = t;
-    }
-  }
-  for (let size = 2; size <= M; size <<= 1) {
-    const half = size >> 1;
-    const step = M / size;
-    for (let i = 0; i < M; i += size) {
-      for (let j = 0, k = 0; j < half; j++, k += step) {
-        const a = i + j;
-        const b = a + half;
-        const tr = re[b] * cos[k] - im[b] * sin[k];
-        const ti = re[b] * sin[k] + im[b] * cos[k];
-        re[b] = re[a] - tr;
-        im[b] = im[a] - ti;
-        re[a] += tr;
-        im[a] += ti;
-      }
-    }
-  }
-}
 
 /**
  * 波形 1 枚から音の高さを当てる
@@ -339,7 +292,7 @@ export function makeNoteTracker(opts = {}) {
     release: 0.05, // 無音がこれだけ続いたら音が止んだとみなす
     unvoiced: 0.2, // 高さの分からない音がこれだけ続いても止んだとみなす
     minGap: 0.09, // 知らせと知らせの間
-    margin: 1.5, // 止んだ音と同じ高さで出だし（打ち直し）がない音は、候補の間の最大が無音の下限のこれ倍以上のときだけ知らせる
+    margin: 2, // 止んだ音と同じ高さで出だし（打ち直し）がない音は、候補の間の最大が無音の下限のこれ倍以上のときだけ知らせる
     //              （鳴り終わって下限すれすれでふらつく音を、新しい音と数えない）
     dip: 0.6, // 弾き直し：いったん山の 0.6 倍まで下がり、
     rise: 1.8, //           そこから 1.8 倍に上がり、

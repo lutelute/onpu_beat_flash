@@ -72,4 +72,11 @@ export const SETS = [
   },
 ];
 
+/** 和音のベンチマーク（chords.mjs）に使う、ピアノの 1 音ずつ（mf、ド3〜ド6）。はじめの 1.5 MB（約 7 秒）だけ取る */
+const FLAT = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
+export const CHORD_NOTES = {
+  id: 'piano-chord', label: 'ピアノ（和音用）', range: 1500000,
+  files: Array.from({ length: 37 }, (_, i) => 48 + i).map((m) => `Piano_Other/piano/Piano.mf.${FLAT[m % 12]}${Math.floor(m / 12) - 1}.aiff`),
+};
+
 export const urlOf = (set, file) => `${set.base ?? IOWA}/${file.split('/').map(encodeURIComponent).join('/')}`;

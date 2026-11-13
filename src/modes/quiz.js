@@ -1,7 +1,7 @@
 // 1 問ずつ答える遊び方。譜面の問題（即答）にも音の問題（聞き取り）にも使う
 import { h, fmtSec, typingInField, onControl } from '../ui/dom.js';
 import { makePad } from '../ui/pads.js';
-import { onMidiNote } from '../ui/midi.js';
+import { onMidiNote, onChord } from '../ui/midi.js';
 import { makeRng, newSeed } from '../core/rng.js';
 import { getSettings, saveSettings, globalSettings, recordAnswer, getRecord, offerRecord } from '../core/store.js';
 import { playEvents, stopAll, sfx } from '../render/audio.js';
@@ -67,7 +67,13 @@ export function mountQuiz(root, { game, gen, life, query }) {
   function setup() {
     setupScreen({
       ...setupBase, L: life.child(), modeTitle: '進め方', sharedSeed,
-      info: () => (ms.length === 'endless' ? '' : `自己ベスト（この設定）: ${recordText(getRecord(recordKey(game, gen, gs, ms)), ms)}`),
+      info: () => {
+        const best = ms.length === 'endless' ? '' : `自己ベスト（この設定）: ${recordText(getRecord(recordKey(game, gen, gs, ms)), ms)}`;
+        // コード聞き取りは、楽器で和音を弾いても答えられる（マイク・MIDI 鍵盤がオンのとき）
+        const g = globalSettings();
+        const how = gen.id === 'chord' && (g.mic || g.midi) ? `聞いた和音を${g.mic ? '楽器（マイク）' : ''}${g.mic && g.midi ? 'や ' : ''}${g.midi ? 'MIDI 鍵盤' : ''}で弾いても答えられます（どの高さで弾いても、種類が合えば正解）` : '';
+        return [best, how].filter(Boolean).join('\n');
+      },
       onStart: () => run(takeSeed()),
     });
   }
@@ -235,6 +241,14 @@ export function mountQuiz(root, { game, gen, life, query }) {
     });
 
     onMidiNote(L, (m) => state === 'ask' && pad.handleMidi(m));
+    // コード聞き取り：楽器（マイク）や MIDI 鍵盤で和音を弾いて答えられる。弾いた和音の種類が答え
+    // （同じ音の組み合わせになる読みが出す種類の中にあれば、それで答える。出す種類の中から選ぶ）
+    if (gen.id === 'chord') {
+      onChord(L, (c) => {
+        if (state !== 'ask') return;
+        answer(c.alts.includes(q.answer) ? q.answer : c.quality);
+      }, { allow: gs.set });
+    }
     next();
   }
 

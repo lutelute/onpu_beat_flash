@@ -187,6 +187,30 @@ for (const [id, gen, keys] of [
   });
 }
 
+await scenario('コード聞き取り：MIDI 鍵盤で和音を弾いて答えられる（ド・ミ・ソ＝メジャー、ラ・ド・ミ＝マイナー）', async () => {
+  await open('#/game/chord', base({
+    global: { naming: 'doremi', sound: false, keyHints: true, volume: 0.7, midi: true },
+    gen: { chord: { set: ['maj', 'min'], play: 'block', inv: 'root', weak: false } },
+    mode: { chord: { length: 'count10', feedback: 'study' } },
+  }));
+  await page.evaluate(() => window.__midi.plug('テスト鍵盤'));
+  await start();
+  for (const [notes, name] of [[[60, 64, 67], 'メジャー'], [[57, 60, 64], 'マイナー']]) {
+    expect(await waitFor(async () => !(await page.$('.pad.disabled')), 5000), '答えを待たない');
+    await page.evaluate((ns) => ns.forEach((n) => window.__midi.send(n)), notes);
+    expect(await waitFor(async () => /[✓×]/.test((await text('.reveal')) || ''), 3000), `和音で答えが入らない（${name}）`);
+    const r = await text('.reveal');
+    expect(new RegExp(`✓.*${name}|あなたの答え: ${name}`).test(r), `${name} と答えていない: ${r}`);
+    await page.keyboard.press('Enter');
+    await sleep(200);
+  }
+  // 2 音だけ（ド・ミ）では答えにならない
+  expect(await waitFor(async () => !(await page.$('.pad.disabled')), 5000), '答えを待たない');
+  await page.evaluate(() => [60, 64].forEach((n) => window.__midi.send(n)));
+  await sleep(400);
+  expect(!/[✓×]/.test((await text('.reveal')) || ''), '2 音で答えになった');
+});
+
 await scenario('譜読みリズム（16音・速め）', async () => {
   await open('#/game/rhythm', base({ mode: { rhythm: { bpm: 200, density: 'every1', length: 'n16', metronome: true, pitch: true, offset: 0 } } }));
   await start();

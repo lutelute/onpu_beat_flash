@@ -74,11 +74,35 @@ function writeTone(path, f, sec = 4, sr = 48000, amp = 0.1) {
   writeFileSync(path, b);
 }
 const sharpWav = join(work, 'a-sharp.wav'); // 466.16 Hz：ラより 100 セント高い（ラ♯）
+// ピアノのようなド・ミ・ソの和音（0.3 秒あけて鳴らし、1.6 秒で消える。2.4 秒ごとにくり返す）
+function writeChord(path, midis, sr = 48000) {
+  const n = Math.ceil(2.4 * sr);
+  const x = new Float32Array(n);
+  const i0 = Math.floor(0.3 * sr);
+  for (const m of midis) {
+    const f = 440 * 2 ** ((m - 69) / 12);
+    [1, 0.6, 0.35, 0.25, 0.15, 0.1].forEach((a, k) => {
+      for (let i = i0; i < n; i++) {
+        const t = (i - i0) / sr;
+        x[i] += 0.05 * a * Math.min(1, t / 0.004) * Math.exp(-t / (0.9 / (1 + 0.4 * k))) * Math.sin(2 * Math.PI * f * (k + 1) * t + k + m);
+      }
+    });
+  }
+  const b = Buffer.alloc(44 + n * 2);
+  b.write('RIFF', 0); b.writeUInt32LE(36 + n * 2, 4); b.write('WAVE', 8);
+  b.write('fmt ', 12); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22);
+  b.writeUInt32LE(sr, 24); b.writeUInt32LE(sr * 2, 28); b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34);
+  b.write('data', 36); b.writeUInt32LE(n * 2, 40);
+  for (let i = 0; i < n; i++) b.writeInt16LE(Math.round(Math.max(-1, Math.min(1, x[i])) * 32767), 44 + i * 2);
+  writeFileSync(path, b);
+}
+const chordWav = join(work, 'c-major.wav');
 const rateWav = join(work, 'a-rate.wav'); // 440 × 48000 / 44100 Hz：音の速さが食いちがうマイクで 440 Hz が聞こえる高さ
 writeWav(quietWav, [60, 64, 67], { amp: 0.0078 });
 writeWav(silentWav, []);
 writeTone(sharpWav, 440 * 2 ** (1 / 12));
 writeTone(rateWav, (440 * 48000) / 44100);
+writeChord(chordWav, [60, 64, 67]);
 
 // 開発中のフォルダ（dist）を書き換えないよう、別のところへビルドする
 const outDir = join(work, 'dist');
@@ -389,6 +413,23 @@ await scenario('マイクの高さを確かめる：音の速さが食いちが�
   await page.evaluate(() => [...document.querySelectorAll('.mic-check .btn')].find((b) => b.textContent.includes('マイクの高さを確かめる')).click());
   expect(await waitFor(async () => /約 1.5 半音高く/.test((await text('.mic-check-said')) || ''), 8000), `確かめた結果: ${await text('.mic-check-said')}`);
   expect(await waitFor(async () => /^ラ（A4）/.test(await tunerText()) && Math.abs(await centsNow()) <= 5, 4000), `補正したあとのチューナー: ${await tunerText()}`);
+});
+
+await browser.close();
+await launch(chordWav);
+await scenario('コード聞き取り：マイクで和音（ド・ミ・ソ）を聞いて、メジャーと答える', async () => {
+  await open('#/game/chord', {
+    global: global(), gen: { chord: { set: ['maj', 'min', 'dim', 'aug'], play: 'block', inv: 'root', weak: false } },
+    mode: { chord: { length: 'count10', feedback: 'study' } }, stats: {}, records: {},
+  });
+  await page.click('.actions.sticky .btn.primary');
+  for (let k = 0; k < 2; k++) {
+    expect(await waitFor(async () => /[✓×]/.test((await text('.reveal')) || ''), 12000), `マイクの和音で答えが入らない（${k + 1} 問め）`);
+    const r = await text('.reveal');
+    expect(/✓.*メジャー|あなたの答え: メジャー/.test(r), `メジャーと答えていない: ${r}`);
+    await page.keyboard.press('Enter');
+    await sleep(200);
+  }
 });
 
 // ------------------------------------------------------------

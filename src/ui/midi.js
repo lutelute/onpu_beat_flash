@@ -1,7 +1,14 @@
 // MIDI 鍵盤（Web MIDI。Chrome・Edge など）。いま答えを待っている入力 1 つにだけ音を渡す
 // マイクで聞き取った音も emitNote で同じところへ渡るので、onMidiNote の受け手はどちらも区別しない
+// 和音を待っているあいだ（onChord。コード聞き取り）は、120 ms のうちに押した 3 音以上を 1 つの和音にして emitChord で渡す
+// （マイクで聞き取った和音も emitChord で同じところへ渡る）
+import { chordFromMidi } from '../core/chordListen.js';
+
 let access = null;
 let target = null;
+let chordTarget = null; // { fn, allow }
+let pending = null; // 和音にまとめている途中 { notes: Set, timer }
+const CHORD_WINDOW_MS = 120;
 const listeners = new Set(); // つながり具合が変わったら知らせる先
 
 export const midiSupported = () => typeof navigator !== 'undefined' && !!navigator.requestMIDIAccess;
@@ -13,7 +20,42 @@ export function emitNote(midi) {
 
 function onMessage(e) {
   const [status, note, vel] = e.data;
-  if ((status & 0xf0) === 0x90 && vel > 0) emitNote(note);
+  if ((status & 0xf0) !== 0x90 || vel <= 0) return;
+  if (chordTarget) gather(note);
+  else emitNote(note);
+}
+
+/** 和音にまとめる：最初の音から 120 ms のうちに押した音 */
+function gather(note) {
+  if (!pending) pending = { notes: new Set(), timer: setTimeout(flush, CHORD_WINDOW_MS) };
+  pending.notes.add(note);
+}
+function flush() {
+  const notes = [...(pending?.notes ?? [])];
+  pending = null;
+  if (notes.length < 3 || !chordTarget) return;
+  const c = chordFromMidi(notes, { allow: chordTarget.allow });
+  if (c?.complete) emitChord({ ...c, notes: notes.sort((a, b) => a - b), from: 'midi' });
+}
+
+/** 弾いた和音 { root, quality, alts, notes } を、いま和音を待っている入力へ渡す。マイク（mic.js）もここを通す */
+export function emitChord(c) {
+  chordTarget?.fn(c);
+}
+
+/** 和音を待っているか（マイクが和音を探すかどうかに使う）。{ allow } か null */
+export const chordListening = () => chordTarget;
+
+/**
+ * 画面の場面（life）が続くあいだ、鍵盤とマイクの和音を fn(chord) に渡す
+ * @param opts.allow 選んでよいコードの種類（ゲームで出す種類。少ないほど聞きまちがえにくい）
+ */
+export function onChord(life, fn, { allow = null } = {}) {
+  const me = { fn, allow };
+  chordTarget = me;
+  life.signal.addEventListener('abort', () => {
+    if (chordTarget === me) chordTarget = null;
+  }, { once: true });
 }
 function attach() {
   if (!access) return;

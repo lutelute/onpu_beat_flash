@@ -202,7 +202,9 @@ function micPanel(life, onPick) {
     renderFix();
     const dir = r.cents > 0 ? '高く' : '低く';
     checkSaid.textContent = j.kind === 'fine'
-      ? `正しい高さで聞こえています（ずれ ${fmt(r.cents)} セント）。補正はいりません`
+      ? mode === 'speaker'
+        ? `正しい高さで聞こえています（ずれ ${fmt(r.cents)} セント）。補正はいりません`
+        : `ずれは小さく、マイクの補正はいりません（ずれ ${fmt(r.cents)} セント。楽器の音程のずれかもしれません。チューナーで合わせられます）`
       : j.kind === 'rate'
         ? `約 1.5 半音${dir}聞こえていました（${fmt(r.cents)} セント）。このマイクは音の速さ（44.1 kHz と 48 kHz）が食いちがっているようです。このマイクだけ補正しました`
         : `${fmt(r.cents)} セント${dir}聞こえていました。このマイクだけ補正しました`;

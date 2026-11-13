@@ -236,7 +236,7 @@ select { padding: 9px 10px; border-radius: 12px; border: 1.5px solid var(--line)
 .actions.sticky .iconbtn { width: 54px; height: 54px; border: 1.5px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--accent); }
 kbd { font: 600 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 3px 5px; border-radius: 5px; border: 1px solid currentColor; opacity: 0.5; }
 @media (hover: none) { kbd { display: none; } }
-.best { text-align: center; font-size: 13px; color: var(--sub); margin: 8px 0; }
+.best { text-align: center; font-size: 13px; color: var(--sub); margin: 8px 0; white-space: pre-line; }
 
 /* ---------- ゲーム中：上に進み具合・真ん中に五線・下に答え ---------- */
 body[data-phase='run'] main {

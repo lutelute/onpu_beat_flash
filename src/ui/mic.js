@@ -5,7 +5,8 @@
 //   ・設定で楽器を選ぶと、その音域だけを聞く。ギターとコントラバス・ベースは 1 オクターブ上げて（楽譜に書く高さで）渡す
 //   ・設定の「マイクの感度」で、無音とみなす下限が 5 段に変わる（core/pitch.js の MIC_SENS）
 import { ensureAudio, audioNow, audioQuietAt, playTestTone } from '../render/audio.js';
-import { emitNote } from './midi.js';
+import { emitNote, emitChord, chordListening } from './midi.js';
+import { multiPitch, makeChordTracker } from '../core/chordListen.js';
 import { globalSettings } from '../core/store.js';
 import { midiLabel } from '../core/music.js';
 import { rms, detectMic, makeNoteTracker, micInstrument, writtenNote, MIC_FLOOR, sensFloor, micTracker, adjustFreq, micKey } from '../core/pitch.js';
@@ -29,6 +30,9 @@ let measure = null; // 周りの音を測っているあいだ { levels, need, d
 let lostHidden = false; // 裏に回っているあいだにマイクが切れた（iPhone・iPad）
 let zeroSince = null; // マイクから届く波形が 0 ばかりになった時刻（OS でマイクが切られている・音の出ない機器を選んでいる）
 let calib = null; // マイクの高さを確かめているあいだ { raw: [{ t, f }] }（アプリの音のあいだも聞く）
+let chordTr = null; // 和音を聞いているあいだの、和音の区切り（コード聞き取り）
+let chordFor = null; // chordTr を作ったときの { allow, sens }
+let tick = 0;
 const NO_SIGNAL_SEC = 1.5;
 const statusFns = new Set();
 const levelFns = new Set();
@@ -124,8 +128,9 @@ function start(ac, s) {
   stream = s;
   const source = ac.createMediaStreamSource(s);
   const analyser = ac.createAnalyser();
-  // 4096 点（約 85 ms）を取り、ふだんは直前の半分（約 43 ms）で当てる。低い音だけ全部で当て直す（detectMic）
-  analyser.fftSize = ac.sampleRate > 64000 ? 8192 : 4096;
+  // 8192 点（約 170 ms）を取る。単音はふだん直前の 2048 点（約 43 ms）、低い音だけ 4096 点で当てる（detectMic）。
+  // 和音は 8192 点全部で、鳴っている音を探す（multiPitch。周波数を細かく分けるため長め）
+  analyser.fftSize = ac.sampleRate > 64000 ? 16384 : 8192;
   analyser.smoothingTimeConstant = 0;
   // 出口までつながっていないと波形が流れないブラウザがあるので、音量 0 で出口へ（スピーカーからは鳴らない）
   const sink = ac.createGain();
@@ -222,8 +227,9 @@ function poll() {
     for (let i = 0; i < buf.length; i++) buf[i] = (nodes.bytes[i] - 128) / 128;
   }
   const t = audioNow();
-  const short = buf.length / 2; // 約 43 ms
-  const level = rms(buf.subarray(short));
+  const mono = buf.subarray(buf.length / 2); // 単音は直前の約 85 ms（そのうち直前の半分が約 43 ms）
+  const short = mono.length / 2;
+  const level = rms(mono.subarray(short));
   // 波形が 0 ばかり（どんな静かな部屋でも、マイクには少しは音が入る）
   if (level < 1e-6) zeroSince ??= t;
   else zeroSince = null;
@@ -232,8 +238,8 @@ function poll() {
   const spec = micInstrument(g.micInstrument);
   // マイクの高さを確かめているあいだは、アプリの音（確かめる音）のあいだも高さを集める（補正の前の、聞こえたままの高さ）
   if (calib) {
-    const pc = level >= sensFloor(sens) * 0.5 ? detectMic(buf, ac.sampleRate, spec, { short }) : null;
-    if (pc && pc.clarity >= 0.9) calib.raw.push({ t, f: pc.freq });
+    const pc = level >= sensFloor(sens) * 0.5 ? detectMic(mono, ac.sampleRate, spec, { short }) : null;
+    if (pc && pc.clarity >= 0.85) calib.raw.push({ t, f: pc.freq });
   }
   // 周りの音を測っているあいだは、アプリの音が鳴っていない枚だけを集める（イヤホンでも、もれた音を数えないように）
   if (measure && quiet) {
@@ -244,12 +250,25 @@ function poll() {
   if (!quiet && !g.micPhones) {
     // アプリの音が鳴っている。鳴り終わったときに残っている音（その残りや、伸ばしたままの音）も新しい音と数えない
     tracker.reset(true);
+    chordTr?.reset();
     return sendLevel(level, null, true, { noSignal });
   }
   // 選んだ楽器の音域（minFreq・maxFreq）の中だけで当てる。ゲームと設定画面には楽譜に書く高さで渡す
-  const p = level >= sensFloor(sens) ? detectMic(buf, ac.sampleRate, spec, { short }) : null;
+  const p = level >= sensFloor(sens) ? detectMic(mono, ac.sampleRate, spec, { short }) : null;
   // そのマイクの補正と基準のラを入れた高さ（A4 = 440 Hz の目盛り）
-  const freq = p ? adjustFreq(p.freq, { fix: g.micFix?.[micKey(label)] ?? 0, refA: g.micRefA ?? 440 }) : null;
+  const fixOpts = { fix: g.micFix?.[micKey(label)] ?? 0, refA: g.micRefA ?? 440 };
+  const freq = p ? adjustFreq(p.freq, fixOpts) : null;
+  // 和音を待っているあいだ（コード聞き取り）：40 ms ごとに、鳴っている音を探して和音にする
+  const ct = chordListening();
+  if (ct) {
+    if (!chordTr || chordFor?.allow !== ct.allow || chordFor?.sens !== sens) {
+      chordTr = makeChordTracker({ minLevel: sensFloor(sens), allow: ct.allow });
+      chordFor = { allow: ct.allow, sens };
+    }
+    const ns = tick++ % 2 === 0 && level >= sensFloor(sens) ? multiPitch(buf, ac.sampleRate, { scale: adjustFreq(1, fixOpts) }) : null;
+    const c = chordTr.feed({ t, level, notes: ns });
+    if (c) emitChord({ ...c, from: 'mic' });
+  } else chordTr = null;
   const m = tracker.feed({ t, level, freq });
   if (m != null) emitNote(writtenNote(m, g.micInstrument));
   sendLevel(level, writtenNote(tracker.note, g.micInstrument), false, { noSignal, freq, clarity: p?.clarity ?? 0 });
@@ -278,7 +297,7 @@ export async function checkMicPitch(mode = 'speaker', refA = 440) {
   let skip = 0.25; // 鳴り始めは捨てる
   let dur = 3;
   if (mode === 'speaker') {
-    const d = playTestTone(440, 1.6);
+    const d = playTestTone(440, 2);
     if (!d) {
       calib = null;
       return { ok: false, n: 0 };
@@ -286,7 +305,7 @@ export async function checkMicPitch(mode = 'speaker', refA = 440) {
     dur = d + 0.15;
   } else skip = 0.3;
   await new Promise((r) => setTimeout(r, dur * 1000));
-  const raw = (calib?.raw ?? []).filter((x) => x.t - t0 >= skip && x.t - t0 <= (mode === 'speaker' ? 1.55 : dur));
+  const raw = (calib?.raw ?? []).filter((x) => x.t - t0 >= skip && x.t - t0 <= (mode === 'speaker' ? 1.95 : dur));
   calib = null;
   if (raw.length < 8) return { ok: false, n: raw.length };
   const fs = raw.map((x) => x.f).sort((a, b) => a - b);

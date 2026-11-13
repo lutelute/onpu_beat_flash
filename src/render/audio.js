@@ -181,28 +181,33 @@ function voice(midi, t, d, vel) {
 }
 
 /**
- * 高さを確かめる音（マイクの高さを確かめる）。ピアノの音は弦のずれを少し入れてあるので、ちょうど f Hz の音（基音と 2・3 倍音）を鳴らす。
- * 戻り値は鳴り終わるまでの秒数（音を出せなければ 0）
+ * 高さを確かめる音（マイクの高さを確かめる）。ちょうど f Hz の音（基音と 2〜5 倍音）を、はじくように 4 回鳴らす。
+ * ピアノの音は弦のずれを少し入れてあるので使わない。ずっと同じ高さの音は、会議用のマイク（ドックなど）が
+ * 雑音として消してしまうので、鳴っては減る音にする。戻り値は鳴り終わるまでの秒数（音を出せなければ 0）
  */
-export function playTestTone(f = 440, dur = 1.6) {
+export function playTestTone(f = 440, dur = 2) {
   if (!ensureAudio()) return 0;
-  const t = ac.currentTime + 0.03;
-  const g = ac.createGain();
-  g.gain.setValueAtTime(0, t);
-  g.gain.linearRampToValueAtTime(0.22, t + 0.02);
-  g.gain.setValueAtTime(0.22, t + dur - 0.05);
-  g.gain.linearRampToValueAtTime(0, t + dur);
-  g.connect(bus);
-  for (const [n, a] of [[1, 1], [2, 0.5], [3, 0.3]]) {
-    const o = ac.createOscillator();
-    o.frequency.value = f * n;
-    const og = ac.createGain();
-    og.gain.value = a;
-    o.connect(og).connect(g);
-    o.start(t);
-    o.stop(t + dur + 0.05);
+  const n = 4;
+  const each = dur / n;
+  const t0 = ac.currentTime + 0.03;
+  for (let i = 0; i < n; i++) {
+    const t = t0 + i * each;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.55, t + 0.006);
+    g.gain.setTargetAtTime(0, t + 0.006, each * 0.45);
+    g.connect(bus);
+    for (const [k, a] of [[1, 1], [2, 0.6], [3, 0.4], [4, 0.25], [5, 0.15]]) {
+      const o = ac.createOscillator();
+      o.frequency.value = f * k;
+      const og = ac.createGain();
+      og.gain.value = a;
+      o.connect(og).connect(g);
+      o.start(t);
+      o.stop(t + each + 0.05);
+    }
   }
-  quietTone = Math.max(quietTone, t + dur + TAIL);
+  quietTone = Math.max(quietTone, t0 + dur + TAIL);
   return dur + 0.03;
 }
 
