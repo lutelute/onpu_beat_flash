@@ -578,6 +578,23 @@ body[data-phase='run'] .stage-wrap.battle { flex: 1 1 auto; margin-block: 0; min
 .mic-meter[data-kind='paused'] .mic-note, .mic-meter[data-kind='nosignal'] .mic-note { color: var(--ng); }
 .mic-say { margin-top: 4px; min-height: 1.6em; }
 .mic-device-row { display: grid; gap: 4px; margin-top: 8px; }
+/* チューナー：いちばん近い音と、ずれ（-50〜+50 セント）。±10 セントの帯が緑 */
+.tuner { display: grid; gap: 4px; margin-top: 10px; }
+.tuner-label { margin: 0; }
+.tuner-row { display: flex; align-items: center; gap: 10px; }
+.tuner-name { flex: none; min-width: 6.5em; font-size: 17px; font-weight: 800; white-space: nowrap; }
+.tuner-scale { position: relative; flex: 1; min-width: 0; height: 22px; border-radius: 8px; border: 1px solid var(--line);
+  background: linear-gradient(90deg, transparent 40%, color-mix(in srgb, var(--ok) 22%, transparent) 40% 60%, transparent 60%), var(--surface-2); }
+.tuner-zero { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--ink); opacity: 0.35; }
+.tuner-needle { position: absolute; left: 50%; top: 2px; bottom: 2px; width: 5px; margin-left: -2.5px; border-radius: 3px; background: var(--accent); transition: left 0.08s linear; }
+.tuner.intune .tuner-needle { background: var(--ok); }
+.tuner.intune .tuner-name { color: var(--ok); }
+.tuner.idle .tuner-needle { opacity: 0.2; }
+.tuner-cents { flex: none; min-width: 5.5em; text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; color: var(--sub); white-space: nowrap; }
+@media (max-width: 380px) { .tuner-name, .tuner-cents { min-width: 0; font-size: 14px; } }
+.mic-check { display: grid; gap: 6px; margin-top: 10px; }
+.mic-check-btns { display: flex; flex-wrap: wrap; gap: 8px; }
+.mic-fix { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .mic-device-row .field-label { margin: 0; }
 .mic-device { width: 100%; max-width: 100%; min-width: 0; font: inherit; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
 /* ゲーム中のマイクの印（上の帯）：音の大きさの短い棒と、聞こえた音名 */

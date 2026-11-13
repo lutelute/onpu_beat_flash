@@ -58,8 +58,27 @@ writeWav(wav, [60, 64, 67]);
 const quietWav = join(work, 'ceg-quiet.wav');
 // 音がまったく来ないマイク（波形が 0 ばかり。OS でマイクが切られているときと同じ）
 const silentWav = join(work, 'silent.wav');
+// ずっと同じ高さの音（チューナーとマイクの高さの補正を確かめる）
+function writeTone(path, f, sec = 4, sr = 48000, amp = 0.1) {
+  const n = Math.ceil(sec * sr);
+  const b = Buffer.alloc(44 + n * 2);
+  b.write('RIFF', 0); b.writeUInt32LE(36 + n * 2, 4); b.write('WAVE', 8);
+  b.write('fmt ', 12); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22);
+  b.writeUInt32LE(sr, 24); b.writeUInt32LE(sr * 2, 28); b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34);
+  b.write('data', 36); b.writeUInt32LE(n * 2, 40);
+  for (let i = 0; i < n; i++) {
+    const t = i / sr;
+    const s = Math.sin(2 * Math.PI * f * t) + 0.5 * Math.sin(2 * Math.PI * 2 * f * t + 1) + 0.3 * Math.sin(2 * Math.PI * 3 * f * t + 2);
+    b.writeInt16LE(Math.round(amp * s * 32767 * 0.55), 44 + i * 2);
+  }
+  writeFileSync(path, b);
+}
+const sharpWav = join(work, 'a-sharp.wav'); // 466.16 Hz：ラより 100 セント高い（ラ♯）
+const rateWav = join(work, 'a-rate.wav'); // 440 × 48000 / 44100 Hz：音の速さが食いちがうマイクで 440 Hz が聞こえる高さ
 writeWav(quietWav, [60, 64, 67], { amp: 0.0078 });
 writeWav(silentWav, []);
+writeTone(sharpWav, 440 * 2 ** (1 / 12));
+writeTone(rateWav, (440 * 48000) / 44100);
 
 // 開発中のフォルダ（dist）を書き換えないよう、別のところへビルドする
 const outDir = join(work, 'dist');
@@ -332,6 +351,44 @@ await scenario('マイクから音がまったく届かないと（OS でマイ�
   await open('#/game/quick', { global: global(), mode: { quick: { length: 'count20', feedback: 'fast' } } });
   await page.click('.actions.sticky .btn.primary');
   expect(await waitFor(async () => (await page.$eval('.runbar .micbadge', (e) => e.dataset.kind).catch(() => '')) === 'nosignal', 6000), 'ゲーム中の印が「無音」にならない');
+});
+
+const tunerText = () => page.evaluate(() => `${document.querySelector('.tuner-name')?.textContent}|${document.querySelector('.tuner-cents')?.textContent}`);
+const centsNow = async () => Number(((await tunerText()).split('|')[1] || '').replace(/[^-+0-9]/g, '') || NaN);
+await browser.close();
+await launch(sharpWav);
+await scenario('チューナー：聞こえている音とずれ（セント）が出る。楽器のラで確かめると、そのマイクだけ補正し、やめることもできる', async () => {
+  await open('#/settings', { global: global() });
+  expect(await waitFor(micOn), 'マイクがオンにならない');
+  expect(await waitFor(async () => /ラ♯|A#|シ♭/.test(await tunerText()) && Math.abs(await centsNow()) <= 5, 6000), `チューナー: ${await tunerText()}`);
+  await page.evaluate(() => [...document.querySelectorAll('.mic-check .btn')].find((b) => b.textContent.includes('楽器のラ')).click());
+  expect(await waitFor(async () => /補正しました/.test((await text('.mic-check-said')) || ''), 8000), `確かめた結果: ${await text('.mic-check-said')}`);
+  expect(/\+100 セント/.test(await text('.mic-check-said')), `ずれ: ${await text('.mic-check-said')}`);
+  const savedFix = () => page.evaluate((k) => JSON.parse(localStorage.getItem(k)).global.micFix ?? {}, KEY);
+  expect(await waitFor(async () => Object.values(await savedFix()).length === 1, 3000), '補正が保存されない');
+  const fix = await savedFix();
+  expect(Math.abs(Object.values(fix)[0] - 100) <= 3, `保存された補正: ${JSON.stringify(fix)}`);
+  expect(await waitFor(async () => /^ラ（A4）/.test(await tunerText()) && Math.abs(await centsNow()) <= 5, 4000), `補正したあとのチューナー: ${await tunerText()}`);
+  await page.evaluate(() => [...document.querySelectorAll('.mic-fix .btn')].find((b) => b.textContent.includes('やめる')).click());
+  expect(await waitFor(async () => /ラ♯|A#|シ♭/.test(await tunerText()), 4000), `補正をやめたあと: ${await tunerText()}`);
+  expect(await waitFor(async () => Object.keys(await savedFix()).length === 0, 3000), '補正が消えない');
+});
+
+await scenario('基準のラを 442 Hz にすると、チューナーはその高さを基準にする', async () => {
+  await open('#/settings', { global: global({ micRefA: 442 }) });
+  expect(await waitFor(micOn), 'マイクがオンにならない');
+  // 466.16 Hz は、442 Hz を基準にするとラ♯より 8 セント低い
+  expect(await waitFor(async () => /ラ♯|A#|シ♭/.test(await tunerText()) && Math.abs((await centsNow()) + 8) <= 3, 6000), `チューナー: ${await tunerText()}`);
+});
+
+await browser.close();
+await launch(rateWav);
+await scenario('マイクの高さを確かめる：音の速さが食いちがうマイク（約 1.5 半音高い）を見分けて補正する', async () => {
+  await open('#/settings', { global: global() });
+  expect(await waitFor(micOn), 'マイクがオンにならない');
+  await page.evaluate(() => [...document.querySelectorAll('.mic-check .btn')].find((b) => b.textContent.includes('マイクの高さを確かめる')).click());
+  expect(await waitFor(async () => /約 1.5 半音高く/.test((await text('.mic-check-said')) || ''), 8000), `確かめた結果: ${await text('.mic-check-said')}`);
+  expect(await waitFor(async () => /^ラ（A4）/.test(await tunerText()) && Math.abs(await centsNow()) <= 5, 4000), `補正したあとのチューナー: ${await tunerText()}`);
 });
 
 // ------------------------------------------------------------

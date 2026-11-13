@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  rms, freqToMidi, detectPitch, makeNoteTracker, MIC_INSTRUMENTS, micInstrument, writtenNote,
+  rms, freqToMidi, detectPitch, detectMic, makeNoteTracker, MIC_INSTRUMENTS, micInstrument, writtenNote,
   MIC_FLOOR, MIC_SENS, micSens, sensFloor, sensTracker, pickSens, micTracker,
+  adjustFreq, tune, judgeMicPitch, micKey, REF_A,
 } from '../src/core/pitch.js';
 import { makeRng } from '../src/core/rng.js';
 
@@ -90,21 +91,35 @@ const MID = [0.5, 1, 0.6, 0.4, 0.25, 0.15];
 const TOP = [1, 0.4, 0.15]; // 高い音は倍音が少ない
 const near = (r, m) => r && Math.abs(freqToMidi(r.freq) - m) < 0.3;
 
-test('指定なしは今までと同じ（50〜1600 Hz、そのまま渡す）。知らない id も指定なし', () => {
+test('指定なしは 38〜1600 Hz（コントラバスのミ1 から）、そのまま渡す。知らない id も指定なし', () => {
   const any = micInstrument('any');
   assert.equal(MIC_INSTRUMENTS[0], any);
-  assert.equal(any.minFreq, 50);
+  assert.equal(any.minFreq, 38);
   assert.equal(any.maxFreq, 1600);
+  assert.equal(any.transpose, 0);
   assert.equal(micInstrument(undefined), any);
   assert.equal(micInstrument('zzz'), any);
+  // 50 Hz より上は、初期値（50〜1600 Hz）と同じに当たる
   for (const sr of [44100, 48000]) {
-    for (let m = 26; m <= 100; m += 2) {
+    for (let m = 32; m <= 100; m += 2) {
       for (const amps of [[0.3], LOW, PIANO]) {
         const f = frame(hz(m), sr, amps);
-        assert.deepEqual(detectPitch(f, sr, any), detectPitch(f, sr), `${sr} Hz・MIDI ${m}`);
+        assert.deepEqual(detectPitch(f, sr, any)?.freq.toFixed(1), detectPitch(f, sr)?.freq.toFixed(1), `${sr} Hz・MIDI ${m}`);
       }
     }
   }
+});
+
+test('低い音（コントラバスのミ1〜ソ1）は、長い窓で当て直す（detectMic）', () => {
+  const any = micInstrument('any');
+  for (const m of [28, 29, 31, 33]) {
+    const long = frame(hz(m), 48000, LOW, { len: 4096 });
+    const p = detectMic(long, 48000, any);
+    assert.ok(p && Math.abs(freqToMidi(p.freq) - m) < 0.3, `MIDI ${m}: ${p && freqToMidi(p.freq).toFixed(2)}`);
+  }
+  // 高い音は、直前の 2048 点だけで当てる（長い窓を使っても同じ答え）
+  const hi = frame(hz(69), 48000, PIANO, { len: 4096 });
+  assert.equal(detectMic(hi, 48000, any).freq.toFixed(2), detectPitch(hi.subarray(2048), 48000, any).freq.toFixed(2));
 });
 
 test('楽器の音域の中の音は聞く（いちばん低い音から高い音まで）', () => {
@@ -312,9 +327,23 @@ test('声：歌い始めに下からすくい上げても、落ち着いた高�
   const scoop = (t) => (t < 0.1 ? null : t < 0.35 ? 59.2 + (t - 0.1) * 3 : t < 0.45 ? 59.95 : 60.05);
   const level = (t) => (t < 0.1 ? 0.0005 : 0.03);
   assert.deepEqual(feedTrack(makeNoteTracker(micTracker(3, 'voice')), 1.2, scoop, level), [60]);
-  // 「指定なし」は速さを優先する（すくい上げの途中の音を先に答えることがある）
-  assert.equal(micTracker(3, 'any').stable, undefined);
   assert.equal(micTracker(3, 'voice').stable, 0.15);
+  // 「指定なし」でも、高さが動いていて鳴り続けているなら落ち着くまで待つ
+  assert.deepEqual(feedTrack(makeNoteTracker(micTracker(3, 'any')), 1.2, scoop, level), [60]);
+});
+
+test('指定なし：高さがすぐ決まる音（ピアノ・はじく音）は待たずに答える', () => {
+  const level = (t) => (t < 0.1 ? 0.0005 : 0.04 * Math.exp(-(t - 0.1) / 0.3));
+  const steady = (t) => (t < 0.1 ? null : 64.02);
+  const out = [];
+  const tr = makeNoteTracker(micTracker(3, 'any'));
+  for (let t = 0.02; t <= 1; t += 0.02) {
+    const m = steady(t);
+    const e = tr.feed({ t, level: level(t), freq: m == null ? null : 440 * 2 ** ((m - 69) / 12) });
+    if (e != null) out.push({ e, t });
+  }
+  assert.deepEqual(out.map((x) => x.e), [64]);
+  assert.ok(out[0].t < 0.2, `答えが遅い: ${out[0].t}`);
 });
 
 test('声：ド〜レ〜ミとつなげて歌っても、1 音ずつ答える。ビブラートは 1 回', () => {
@@ -477,4 +506,45 @@ test('周りの音を測って選ぶ：下限が周りの音の 2 倍以上あ�
       assert.ok(sensFloor(1) < 2 * r.room);
     }
   }
+});
+
+
+// ---- 高さの基準と、マイクごとの補正 ----
+test('チューナー：いちばん近い半音と、そこからのずれ（セント）。基準のラを変えられる', () => {
+  assert.deepEqual(tune(440), { midi: 69, cents: 0 });
+  assert.deepEqual(tune(445), { midi: 69, cents: 20 });
+  assert.deepEqual(tune(261.63), { midi: 60, cents: 0 });
+  assert.deepEqual(tune(442, 442), { midi: 69, cents: 0 });
+  assert.deepEqual(tune(442), { midi: 69, cents: 8 });
+  // バロックの 415 Hz のラは、440 Hz の目盛りではソ♯だが、基準を 415 にすればラ
+  assert.equal(tune(415).midi, 68);
+  assert.equal(tune(415, 415).midi, 69);
+  assert.ok(REF_A.includes(442) && REF_A[0] === 440);
+});
+
+test('マイクの補正：高く聞こえるマイクの分を戻し、基準のラに合わせる', () => {
+  const near = (a, b) => Math.abs(a - b) < 1e-6;
+  assert.ok(near(adjustFreq(440), 440));
+  // 147 セント高く聞こえるマイク（44.1 kHz で録って 48 kHz と名乗る）で、440 Hz が 478.9 Hz に聞こえる
+  const heard = 440 * (48000 / 44100);
+  assert.ok(near(adjustFreq(heard, { fix: 1200 * Math.log2(48000 / 44100) }), 440));
+  // 442 Hz で合わせたラは、ゲームの中では 440 Hz のラ
+  assert.ok(near(adjustFreq(442, { refA: 442 }), 440));
+  assert.equal(freqToMidi(adjustFreq(415, { refA: 415 })), 69);
+});
+
+test('マイクの高さを確かめた結果：小さいずれは直さない・約 147 セントは音の速さの食いちがい・ほかは測ったとおり', () => {
+  assert.deepEqual(judgeMicPitch(5), { kind: 'fine', fix: 0 });
+  assert.deepEqual(judgeMicPitch(-19), { kind: 'fine', fix: 0 });
+  assert.deepEqual(judgeMicPitch(NaN), { kind: 'fine', fix: 0 });
+  assert.deepEqual(judgeMicPitch(152), { kind: 'rate', fix: 146.7 });
+  assert.deepEqual(judgeMicPitch(-140), { kind: 'rate', fix: -146.7 });
+  assert.deepEqual(judgeMicPitch(60), { kind: 'offset', fix: 60 });
+});
+
+test('マイクの名前から「既定 - 」を外して、補正の鍵にする', () => {
+  assert.equal(micKey('既定 - MacBook Proのマイク (Built-in)'), 'MacBook Proのマイク (Built-in)');
+  assert.equal(micKey('Default - HiDock H1'), 'HiDock H1');
+  assert.equal(micKey('HiDock H1 (1395:005c)'), 'HiDock H1 (1395:005c)');
+  assert.equal(micKey(''), '');
 });

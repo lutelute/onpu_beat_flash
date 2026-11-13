@@ -163,6 +163,19 @@ export function detectPitch(buf, sampleRate, opts = {}) {
   return { freq, clarity };
 }
 
+/**
+ * マイクの 1 枚から高さを当てる（ゲームのマイクと、ベンチマークが使う）
+ * ふだんは直前の short 点（48 kHz で 2048 点＝約 43 ms）で当てる。低い音（lowHz より下）や当てられなかったときだけ、
+ * 長い窓（buf 全体。4096 点＝約 85 ms）で当て直す。43 ms にはコントラバスの低い音の波が 2 回ほどしか入らず、
+ * 2 倍音につられて 1 オクターブ上と当てたり、当てられなかったりするため（チェロ・コントラバスのピチカートで効く）
+ */
+export function detectMic(buf, sampleRate, opts = {}, { short = 2048, lowHz = 120 } = {}) {
+  const head = buf.length > short ? buf.subarray(buf.length - short) : buf;
+  const p = detectPitch(head, sampleRate, opts);
+  if (buf.length <= short || (p && p.freq >= lowHz)) return p;
+  return detectPitch(buf, sampleRate, opts) ?? p;
+}
+
 // ---- 楽器ごとの聞く範囲（設定の「マイクで聞く楽器」） ----
 // low・high は楽器の出せる音（鳴る高さ）の MIDI 番号。両はしに 1.5 半音のゆとりをつけた外は聞かない
 //   ・low より下：その周期は調べない（minFreq）。楽器に出せない低い音へ 1 オクターブ下に飛ぶことがない
@@ -175,8 +188,11 @@ const midiToFreq = (m) => 440 * 2 ** ((m - 69) / 12);
 const span = (low, high, transpose = 0) => ({ low, high, minFreq: midiToFreq(low - MARGIN), maxFreq: midiToFreq(high + MARGIN), transpose });
 
 export const MIC_INSTRUMENTS = [
-  // 今までどおり（detectPitch の初期値と同じ 50〜1600 Hz）
-  { id: 'any', label: '指定なし', low: null, high: null, minFreq: 50, maxFreq: 1600, transpose: 0 },
+  // 指定なし：コントラバスのいちばん低いミ1（41 Hz）からピアノのソ6 あたりまで。50 Hz より下を聞かないと、
+  // ミ1〜ソ1 を 1 オクターブ上と当てたり当てられなかったりする（コントラバスの録音で 73% → 90%）
+  // 歌う人も楽器を選ばないことが多いので、高さが動いていて鳴り続けている音（歌い始めのすくい上げ）は 0.2 秒落ち着くまで待つ
+  // （男声の録音で、はじめの答えが正しいのが 51% → 81%。はじく音・ピアノは待たない。弓の弦楽器は 30 ms ほど遅くなる）
+  { id: 'any', label: '指定なし', low: null, high: null, minFreq: 38, maxFreq: 1600, transpose: 0, tracker: { movingWait: { spread: 0.1, fall: 0.35, stable: 0.2 } } },
   // 鍵盤は A0〜C8。ただ 2048 点（約 43 ms）の波形に周期が 1.67 回分は入らないと当てられないので、E1 から
   // （下限は 48 kHz で 39 Hz、44.1 kHz で 36 Hz）。上は C8 まで聞くが、G♯7 あたりから上は周期が 15 点に満たず、
   // ずらし量が整数なので山の頂を取りこぼし、倍音の強い音だと 1 オクターブ下に取ることがある
@@ -200,6 +216,42 @@ export const micInstrument = (id) => MIC_INSTRUMENTS.find((x) => x.id === id) ??
 
 /** 聞こえた音（鳴る高さ）→ ゲームに渡す音（楽譜に書く高さ）。ギターとコントラバス・ベースだけ 12 上がる */
 export const writtenNote = (midi, id) => (midi == null ? null : midi + micInstrument(id).transpose);
+
+// ---- 高さの基準と、マイクごとの補正（チューナーと「マイクの高さを確かめる」） ----
+/** 基準のラ（A4）の選択肢。日本のオーケストラは 442 Hz が多い。415 Hz はバロック（半音近く低い） */
+export const REF_A = [440, 442, 443, 441, 415, 430];
+
+/**
+ * 聞こえた高さ → アプリの中の高さ（A4 = 440 Hz の目盛り）。fix はそのマイクの補正（セント。高く聞こえるマイクなら正）、
+ * refA は弾き手の基準のラ。442 Hz で合わせた楽器のラ（442 Hz）は 440 Hz のラとして扱う
+ */
+export const adjustFreq = (freq, { fix = 0, refA = 440 } = {}) => freq * 2 ** (-fix / 1200) * (440 / refA);
+
+/** 高さ（Hz）→ いちばん近い半音と、そこからのずれ（セント、-50〜+50） */
+export function tune(freq, refA = 440) {
+  const m = 69 + 12 * Math.log2(freq / refA);
+  const midi = Math.round(m);
+  return { midi, cents: Math.round((m - midi) * 100) };
+}
+
+// 音の速さ（1 秒の点の数）が 44.1 kHz と 48 kHz で食いちがうマイクは、約 147 セント高く（低く）聞こえる
+const RATE_CENTS = 1200 * Math.log2(48000 / 44100);
+
+/**
+ * マイクの高さを確かめた結果（基準の音からのずれ、セント）をどう扱うか
+ * @returns {{ kind: 'fine'|'rate'|'offset', fix: number }}
+ *   fine   … ずれが小さい（±20 セント未満）。補正しない
+ *   rate   … 約 ±147 セント：音の速さの食いちがい。ちょうどその分を補正する
+ *   offset … そのほかのずれ（測ったとおりに補正する）
+ */
+export function judgeMicPitch(cents) {
+  if (!Number.isFinite(cents) || Math.abs(cents) < 20) return { kind: 'fine', fix: 0 };
+  for (const sgn of [1, -1]) if (Math.abs(cents - sgn * RATE_CENTS) < 25) return { kind: 'rate', fix: Math.round(sgn * RATE_CENTS * 10) / 10 };
+  return { kind: 'offset', fix: Math.round(cents) };
+}
+
+/** マイクの名前 → 補正を覚えておく鍵（「既定 - 」のような前置きを外す） */
+export const micKey = (label) => String(label || '').replace(/^(既定|Default|デフォルト)\s*-\s*/i, '').trim();
 
 // ---- マイクの感度（設定の「マイクの感度」） ----
 // 1 枚の大きさ（rms）が下限より小さければ無音とみなし、高さも調べない。「ふつう」の下限は今までと同じ 0.004（-48 dB）
@@ -287,16 +339,24 @@ export function makeNoteTracker(opts = {}) {
     release: 0.05, // 無音がこれだけ続いたら音が止んだとみなす
     unvoiced: 0.2, // 高さの分からない音がこれだけ続いても止んだとみなす
     minGap: 0.09, // 知らせと知らせの間
+    margin: 1.5, // 止んだ音と同じ高さで出だし（打ち直し）がない音は、候補の間の最大が無音の下限のこれ倍以上のときだけ知らせる
+    //              （鳴り終わって下限すれすれでふらつく音を、新しい音と数えない）
     dip: 0.6, // 弾き直し：いったん山の 0.6 倍まで下がり、
     rise: 1.8, //           そこから 1.8 倍に上がり、
     attack: 2.0, //         しかも直前の 2 枚（約 40 ms）の小さいほうの 2 倍以上に跳ね上がったら（打ち直し）
     glide: 0.2, // すくい上げ：候補の始めから半音のこれだけ動き、まだ同じ向きに動いていたら待つ
+    movingWait: null, // { spread, fall, stable }：候補の高さの幅が spread 半音以上なら、stable 秒続くまで待つ（「指定なし」で歌ったとき）。
+    //                   出だしがいちばん高く fall 半音より少なく下がる形（はじいた弦）は待たない
     settle: 0.5, //   待つのは候補ができてからこの秒数まで（そこからは、その時の高さで知らせる）
     memory: 0.5, // 止んだ音が、この秒数のうちに戻ってきたら、うなりかもしれない
-    restrike: 0.35, // 戻ってきた音が、止んだ音の山のこれ倍より小さければ、うなり（同じ音の続き）
-    // 知らせる瞬間の大きさが候補の間の最大のこれ倍より小さければ、すぐ消える音（拍子木は 10 ms ほどで半分になる。
-    // ピアノのいちばん上のあたりの音も 0.1 秒ほどで半分になるので、0.5 では数えそこねていた）
-    sustain: 0.3,
+    restrike: 0.5, // 戻ってきた音が、止んだ音の山のこれ倍より小さければ、うなりや雑音（同じ音の続き）。ギターは弦に触れた音で 3〜4 割まで跳ねる
+    // 知らせる瞬間の大きさが候補の間の最大のこれ倍より小さければ、すぐ消える音（拍子木は 10 ms ほどで半分になり、知らせる
+    // ころには山の 2〜5%。ピアノのいちばん上のあたりの音は 0.1 秒ほどで半分、弦のピチカートは 20 ms ほどで半分になり、
+    // 知らせるころには山の 25% ほど。0.5・0.3 ではそれらを数えそこねていた）
+    sustain: 0.15,
+    collapse: 0.45, // 直前の 1 枚のこれ倍より小さく急に落ちていて、山の半分もないときは、もう 1 枚待つ。そこで消えていれば
+    //               すぐ消える音（拍子木）、まだ同じ高さで鳴っていれば知らせる（短いピチカート。弦をはじいた音は 80 ms ほどでも
+    //               高さがはっきりしていて、少し鳴り残る）
     gap: 0.25, // 1 枚と 1 枚の間がこれより空いたら（裏に回ったなど）、候補を捨てる
     ...opts,
   };
@@ -331,6 +391,23 @@ export function makeNoteTracker(opts = {}) {
     if (!keepCand) cand = null;
   };
 
+  /** 落ち着くのを待っていた候補が、待ちきる前に消えた：そのときの高さ（直前の 2 枚）で知らせる */
+  function rescue(t, lv) {
+    if (!cand?.held || adopt) return null;
+    const k = cand.ms.length;
+    const now = (cand.ms[k - 1] + cand.ms[Math.max(0, k - 2)]) / 2;
+    const r = Math.round(now);
+    if (Math.abs(now - r) > o.tolerance || (cur != null && sameNote(r, cur)) || t - lastEmit < o.minGap - 1e-9) {
+      cand = null;
+      return null;
+    }
+    const top = cand.top;
+    start(r, lv, t);
+    peak = Math.max(peak, top);
+    lastEmit = t;
+    return r;
+  }
+
   function reset(hold = false) {
     stop();
     prev = [];
@@ -353,6 +430,7 @@ export function makeNoteTracker(opts = {}) {
     const lv = Number.isFinite(level) ? level : 0;
     // 打ち直し：直前の 2 枚の小さいほうから attack 倍以上に跳ね上がった（無音から鳴り始めたときも）
     const low = prev.length ? Math.min(...prev) : 0;
+    const prevLv = prev.length ? prev[prev.length - 1] : 0;
     const struck = lv >= o.minLevel && lv >= o.attack * Math.max(low, o.minLevel * 0.25);
     if (struck) attackAt = t;
     prev.push(lv);
@@ -370,7 +448,12 @@ export function makeNoteTracker(opts = {}) {
 
     // 無音
     if (lv < o.minLevel) {
+      const first = quietSince == null;
       quietSince ??= t;
+      if (first) {
+        const r = rescue(t, lv);
+        if (r != null) return r;
+      }
       if (t - quietSince >= o.release - 1e-9) {
         stop(t);
         adopt = false;
@@ -399,15 +482,39 @@ export function makeNoteTracker(opts = {}) {
       cand.frames++;
       cand.top = Math.max(cand.top, lv);
       cand.ms.push(m);
+      cand.alt = null; // 1 枚だけの違う高さ（雑音・倍音）だった
     } else {
       const r = Math.round(m);
-      if (Math.abs(m - r) > o.tolerance) {
-        cand = null; // 半音と半音のあいだ
+      const between = Math.abs(m - r) > o.tolerance; // 半音と半音のあいだ
+      // 2 枚以上続いた候補は、違う高さが 1 枚だけ混ざっても捨てない（弦の雑音や倍音の 1 枚。2 枚続いたら乗り換える）
+      if (cand && cand.frames >= 2 && !cand.alt) {
+        cand.alt = { midi: between ? null : r, since: t, top: lv, m };
         return null;
       }
-      cand = { midi: r, since: t, frames: 1, top: lv, over: cur != null, ms: [m] };
+      if (between) {
+        cand = null;
+        return null;
+      }
+      // 乗り換える。前の 1 枚も同じ高さなら、その時刻から数える
+      const a = cand?.alt?.midi === r ? cand.alt : null;
+      cand = a
+        ? { midi: r, since: a.since, frames: 2, top: Math.max(a.top, lv), over: cur != null, ms: [a.m, m] }
+        : { midi: r, since: t, frames: 1, top: lv, over: cur != null, ms: [m] };
     }
-    if (t - cand.since < o.stable - 1e-9 || cand.frames < o.minFrames) return null;
+    let need = o.stable;
+    // 高さが上へ動いていて、音が鳴り続けている（山の 6 割以上）なら、落ち着くまで待つ（歌い始めのすくい上げ）。
+    // はじく音（ピチカート・ピアノ・ギター）はすぐ小さくなるので待たない（待つと消えてしまう）
+    // 高さの幅が spread 半音以上なら動いている（歌い始めは上がったり、上がってから少し戻ったりする）。
+    // 待っているあいだに音が消えたら、そのときの高さで知らせる（rescue。短い音を落とさない）
+    const moving = o.movingWait && cand.ms.length >= 2 && Math.max(...cand.ms) - Math.min(...cand.ms) >= o.movingWait.spread;
+    if (moving && lv >= cand.top * 0.6) need = Math.max(need, o.movingWait.stable);
+    if (t - cand.since < need - 1e-9 || cand.frames < o.minFrames) {
+      if (need > o.stable && cand.frames >= o.minFrames) cand.held = true;
+      return null;
+    }
+    // 止んだ音と同じ高さで、出だしがなく小さすぎる（鳴り終わりのふらつき）。違う高さの小さな音（弱いフルートなど）は待たない
+    const tail = recent && t - recent.t < 6 && sameNote(cand.midi, recent.midi);
+    if (tail && !adopt && !cand.over && cand.top < o.minLevel * o.margin && attackAt < cand.since - 0.1) return null;
     // すくい上げの途中なら待つ。落ち着いたら、いまの高さ（直前の 2 枚）に丸め直す
     const ms = cand.ms;
     const k = ms.length;
@@ -427,18 +534,24 @@ export function makeNoteTracker(opts = {}) {
     const echo = recent && t - recent.t <= o.memory && sameNote(cand.midi, recent.midi) && (attackAt < recent.t || cand.top < recent.peak * o.restrike);
     // すぐ消える音かどうかは、無音から始まった音だけで見る（前の音が鳴っている途中から始まると、候補の間の最大に
     // 前の音の大きさが入り、前の音が止んだだけで小さくなったように見える）
+    if (!cand.over && !cand.waited && lv < prevLv * o.collapse && lv < cand.top * 0.5) {
+      cand.waited = true; // 急に落ちている：次の 1 枚で、まだ鳴っているかを見る
+      return null;
+    }
     const brief = !cand.over && lv < cand.top * o.sustain;
     if (brief || adopt || echo) {
       // すぐ消える音・アプリの音の残り・うなりの戻り：知らせずに鳴っている音として受け入れる（その残響も数えない）
       adopt = false;
-      const top = echo ? recent.peak : 0;
+      const top = Math.max(cand.top, echo ? recent.peak : 0);
       start(cand.midi, lv, t);
       peak = Math.max(peak, top); // うなりの戻りは同じ音の続きなので、山の大きさは前の山のまま
       return null;
     }
     if (t - lastEmit < o.minGap - 1e-9) return null; // 次の 1 枚でもう一度
     const midi = cand.midi;
+    const top = cand.top;
     start(midi, lv, t);
+    peak = Math.max(peak, top); // 山は、知らせた瞬間ではなく音の出だしの大きさ（弾き直しの見分けに使う）
     lastEmit = t;
     return midi;
   }

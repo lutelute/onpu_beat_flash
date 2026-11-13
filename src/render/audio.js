@@ -180,6 +180,32 @@ function voice(midi, t, d, vel) {
   quietVoice = Math.max(quietVoice, (t + d + v.end) / 2 + TAIL); // 鍵を離してから消えるまでの半分（約 -35 dB）
 }
 
+/**
+ * 高さを確かめる音（マイクの高さを確かめる）。ピアノの音は弦のずれを少し入れてあるので、ちょうど f Hz の音（基音と 2・3 倍音）を鳴らす。
+ * 戻り値は鳴り終わるまでの秒数（音を出せなければ 0）
+ */
+export function playTestTone(f = 440, dur = 1.6) {
+  if (!ensureAudio()) return 0;
+  const t = ac.currentTime + 0.03;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(0.22, t + 0.02);
+  g.gain.setValueAtTime(0.22, t + dur - 0.05);
+  g.gain.linearRampToValueAtTime(0, t + dur);
+  g.connect(bus);
+  for (const [n, a] of [[1, 1], [2, 0.5], [3, 0.3]]) {
+    const o = ac.createOscillator();
+    o.frequency.value = f * n;
+    const og = ac.createGain();
+    og.gain.value = a;
+    o.connect(og).connect(g);
+    o.start(t);
+    o.stop(t + dur + 0.05);
+  }
+  quietTone = Math.max(quietTone, t + dur + TAIL);
+  return dur + 0.03;
+}
+
 /** 音の並びをすぐ鳴らす。戻り値は鳴り終わるまでの秒数 */
 export function playEvents(events, { delay = 0.03, vel = 0.8 } = {}) {
   if (!events?.length || !ensureAudio()) return 0;

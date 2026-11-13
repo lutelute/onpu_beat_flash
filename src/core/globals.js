@@ -1,6 +1,6 @@
 // 共通の設定（音名の呼び方・音・表示）。ホームの設定画面と保存データの検査で使う
 import { NAMINGS, NAMING_ORDER } from './music.js';
-import { MIC_INSTRUMENTS, MIC_SENS } from './pitch.js';
+import { MIC_INSTRUMENTS, MIC_SENS, REF_A } from './pitch.js';
 
 export const GLOBAL_DEFAULTS = {
   naming: 'doremi',
@@ -13,6 +13,8 @@ export const GLOBAL_DEFAULTS = {
   micSens: 3, // ふつう（今までと同じ聞こえ方）
   micPhones: false,
   micDevice: '', // 使うマイク（機器の id。空ならいつものマイク＝OS の設定に合わせる）。設定の画面のマイクの欄で選ぶ
+  micRefA: 440, // 基準のラ（Hz）。弾き手の楽器を合わせた高さ
+  micFix: {}, // マイクごとの高さの補正（マイクの名前 → セント）。「マイクの高さを確かめる」で入る
   theme: 'auto',
 };
 
@@ -44,6 +46,11 @@ export const globalFields = () => [
     key: 'micSens', type: 'segmented', label: 'マイクの感度', show: (s) => s.mic,
     options: MIC_SENS.map(({ id, label }) => ({ id, label })),
     note: '弾いていないのに音が出るときは低く、小さな音や離れた音を拾わないときは高くします。「マイクで答える」の下の「周りの音を測る」で、部屋に合わせて選ぶこともできます',
+  },
+  {
+    key: 'micRefA', type: 'segmented', label: '基準のラ（A4）', show: (s) => s.mic,
+    options: REF_A.map((hz) => ({ id: hz, label: `${hz} Hz` })),
+    note: '楽器を合わせた高さに。日本のオーケストラは 442 Hz が多く、バロックは 415 Hz（半音近く低い）。マイクの欄のチューナーも、この高さを基準にずれを出します',
   },
   {
     key: 'micPhones', type: 'toggle', label: 'イヤホンで聞いている（アプリの音のあいだもマイクを止めない）',

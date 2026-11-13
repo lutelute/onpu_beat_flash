@@ -6,9 +6,9 @@ import { globalFields } from '../core/globals.js';
 import { setVolume, playEvents } from '../render/audio.js';
 import { applyTheme } from '../ui/theme.js';
 import { enableMidi, midiStatus, onMidiStatus, onMidiNote } from '../ui/midi.js';
-import { enableMic, micStatus, onMicStatus, onMicLevel, micFloor, measureRoom, hearing, listMics, micDeviceId, reopenMic, onMicDevices } from '../ui/mic.js';
+import { enableMic, micStatus, onMicStatus, onMicLevel, micFloor, measureRoom, hearing, listMics, micDeviceId, reopenMic, onMicDevices, checkMicPitch, micName } from '../ui/mic.js';
 import { midiLabel } from '../core/music.js';
-import { pickSens, micSens } from '../core/pitch.js';
+import { pickSens, micSens, tune, judgeMicPitch } from '../core/pitch.js';
 
 export function mountSettings(root, { life }) {
   const midiLine = h('div', { class: 'field-note midi-status', 'aria-live': 'polite' });
@@ -128,6 +128,90 @@ function micPanel(life, onPick) {
   }
   onMicDevices(fillMics, life);
 
+  // ---- チューナー：いま聞こえている高さの、いちばん近い音と、そこからのずれ（基準のラで直した高さ） ----
+  const tnName = h('span', { class: 'tuner-name' }, '—');
+  const tnCents = h('span', { class: 'tuner-cents' }, '');
+  const tnNeedle = h('span', { class: 'tuner-needle' });
+  const tuner = h('div', { class: 'tuner idle', hidden: true },
+    h('span', { class: 'field-label tuner-label' }, 'チューナー'),
+    h('span', { class: 'tuner-row' },
+      tnName,
+      h('span', { class: 'tuner-scale', 'aria-hidden': 'true' }, h('span', { class: 'tuner-zero' }), tnNeedle),
+      tnCents));
+  const recentF = [];
+  let lastHeard = 0;
+  function showTuner(freq, clarity) {
+    const now = performance.now() / 1000;
+    if (freq && clarity >= 0.9) {
+      recentF.push(freq);
+      if (recentF.length > 5) recentF.shift();
+      lastHeard = now;
+    } else if (now - lastHeard > 0.35) recentF.length = 0;
+    if (!recentF.length) {
+      tuner.classList.add('idle');
+      tnName.textContent = '—';
+      tnCents.textContent = '';
+      return;
+    }
+    const f = [...recentF].sort((a, b) => a - b)[recentF.length >> 1]; // 5 枚の真ん中（針がふらつかないように）
+    const { midi, cents } = tune(f);
+    tuner.classList.remove('idle');
+    tuner.classList.toggle('intune', Math.abs(cents) <= 10);
+    tnName.textContent = midiLabel(midi, globalSettings().naming);
+    tnCents.textContent = `${cents > 0 ? '+' : ''}${cents} セント`;
+    tnNeedle.style.left = `${50 + cents}%`;
+  }
+
+  // ---- マイクの高さを確かめる（スピーカーの 440 Hz か、楽器のラで）。ずれていれば、そのマイクだけ補正する ----
+  const fmt = (c) => `${c > 0 ? '+' : ''}${Math.round(c)}`;
+  const fixText = h('span', {});
+  const setFix = (cents) => {
+    const k = micName();
+    if (!k) return;
+    const fx = { ...(globalSettings().micFix || {}) };
+    if (cents) fx[k] = cents;
+    else delete fx[k];
+    setGlobal({ micFix: fx });
+  };
+  const fixRow = h('div', { class: 'field-note mic-fix', hidden: true }, fixText, ' ',
+    h('button', { type: 'button', class: 'btn small ghost', onclick: () => { setFix(0); renderFix(); checkSaid.textContent = '補正をやめました'; } }, '補正をやめる'));
+  function renderFix() {
+    const c = globalSettings().micFix?.[micName()] ?? 0;
+    fixRow.hidden = !c;
+    fixText.textContent = c ? `このマイク（${micName()}）は ${fmt(c)} セントずれて聞こえるので、補正しています。` : '';
+  }
+  const checkSaid = h('div', { class: 'field-note mic-check-said', 'aria-live': 'polite' });
+  async function runCheck(mode) {
+    const refA = globalSettings().micRefA ?? 440;
+    bySpeaker.disabled = byInstrument.disabled = true;
+    checkSaid.textContent = mode === 'speaker'
+      ? 'スピーカーからラ（440 Hz）を鳴らして、マイクで聞いています…'
+      : `ラ（A）の音を 3 秒ほど伸ばして弾くか歌ってください（基準 ${refA} Hz）…`;
+    const r = await checkMicPitch(mode, refA);
+    bySpeaker.disabled = byInstrument.disabled = false;
+    if (!life.alive) return;
+    if (!r.ok) {
+      checkSaid.textContent = mode === 'speaker'
+        ? 'スピーカーの音がマイクに届きませんでした（音量が 0・イヤホンで聞いている など）。「楽器のラで確かめる」でも確かめられます'
+        : 'ラの音がはっきり聞こえませんでした。マイクの近くで、もう一度伸ばして弾いてください';
+      return;
+    }
+    // 測ったずれは補正を入れる前の聞こえ方なので、今の補正とは関係なく置きかえる
+    const j = judgeMicPitch(r.cents);
+    setFix(j.fix);
+    renderFix();
+    const dir = r.cents > 0 ? '高く' : '低く';
+    checkSaid.textContent = j.kind === 'fine'
+      ? `正しい高さで聞こえています（ずれ ${fmt(r.cents)} セント）。補正はいりません`
+      : j.kind === 'rate'
+        ? `約 1.5 半音${dir}聞こえていました（${fmt(r.cents)} セント）。このマイクは音の速さ（44.1 kHz と 48 kHz）が食いちがっているようです。このマイクだけ補正しました`
+        : `${fmt(r.cents)} セント${dir}聞こえていました。このマイクだけ補正しました`;
+  }
+  const bySpeaker = h('button', { type: 'button', class: 'btn small', onclick: () => runCheck('speaker') }, 'マイクの高さを確かめる');
+  const byInstrument = h('button', { type: 'button', class: 'btn small ghost', onclick: () => runCheck('instrument') }, '楽器のラで確かめる');
+  const checkRow = h('div', { class: 'mic-check', hidden: true },
+    h('div', { class: 'mic-check-btns' }, bySpeaker, byInstrument), checkSaid, fixRow);
+
   const show = (st) => {
     const on = globalSettings().mic;
     line.textContent = on ? st.text : '';
@@ -136,7 +220,12 @@ function micPanel(life, onPick) {
     say2.hidden = !working;
     calibRow.hidden = !working;
     deviceRow.hidden = !working;
-    if (working) fillMics();
+    tuner.hidden = !working;
+    checkRow.hidden = !working;
+    if (working) {
+      fillMics();
+      renderFix();
+    }
     if (!working) say('');
   };
   let shown = '—';
@@ -153,8 +242,9 @@ function micPanel(life, onPick) {
     const text = gated ? 'アプリの音' : midi != null ? midiLabel(midi, globalSettings().naming) : hr.kind === 'paused' || hr.kind === 'nosignal' ? '音なし' : '—';
     if (text !== shown) note.textContent = shown = text;
     if (hr.long !== told) say2.textContent = told = hr.long;
+    showTuner(info.freq, info.clarity);
   }, life);
   show(micStatus());
   onMicStatus(show, life);
-  return { el: h('div', {}, line, deviceRow, meter, say2, calibRow), show, said: say };
+  return { el: h('div', {}, line, deviceRow, meter, say2, tuner, calibRow, checkRow), show, said: say };
 }
