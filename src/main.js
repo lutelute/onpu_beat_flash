@@ -5,6 +5,7 @@
 //   #/stats       記録
 //   #/about       このアプリについて
 //   #/account     アカウント（ログイン・記録をアカウントと合わせる）
+//   #/tuner       チューナー
 import './style.css';
 import { h, makeLife } from './ui/dom.js';
 import { MODES, gameById, genOf } from './games.js';
@@ -14,6 +15,7 @@ import { mountGuide } from './screens/guide.js';
 import { mountAbout } from './screens/about.js';
 import { mountSettings } from './screens/settings.js';
 import { mountAccount } from './screens/account.js';
+import { mountTuner } from './screens/tuner.js';
 import { initAccount, account, onAccount } from './account/account.js';
 import { icon } from './ui/icons.js';
 import { globalSettings } from './core/store.js';
@@ -73,6 +75,7 @@ const PAGES = {
   about: { title: 'このアプリについて', mount: mountAbout },
   settings: { title: '設定', mount: mountSettings },
   account: { title: 'アカウント', mount: mountAccount },
+  tuner: { title: 'チューナー', mount: mountTuner },
 };
 
 let life = null;

@@ -36,6 +36,7 @@ let tick = 0;
 const NO_SIGNAL_SEC = 1.5;
 const statusFns = new Set();
 const levelFns = new Set();
+const frameFns = new Set();
 const deviceFns = new Set();
 
 /** いまの感度の下限（rms）。これより小さい音は無音とみなす */
@@ -178,6 +179,11 @@ function close() {
   sendLevel(0, null, false);
 }
 
+/** 1 枚ごとの高さを、チューナーと「なぞって採点」へ */
+function sendFrame(frame) {
+  for (const fn of frameFns) fn(frame);
+}
+
 /** extra：paused（ブラウザが音を止めている。画面に触れると動く）・noSignal（マイクから音がまったく届かない） */
 function sendLevel(level, midi, gated, extra = {}) {
   if (!levelFns.size) return;
@@ -251,6 +257,7 @@ function poll() {
     // アプリの音が鳴っている。鳴り終わったときに残っている音（その残りや、伸ばしたままの音）も新しい音と数えない
     tracker.reset(true);
     chordTr?.reset();
+    sendFrame({ t, level, freq: null, rawFreq: null, clarity: 0, gated: true, noSignal, buf: mono, sampleRate: ac.sampleRate });
     return sendLevel(level, null, true, { noSignal });
   }
   // 選んだ楽器の音域（minFreq・maxFreq）の中だけで当てる。ゲームと設定画面には楽譜に書く高さで渡す
@@ -271,6 +278,7 @@ function poll() {
   } else chordTr = null;
   const m = tracker.feed({ t, level, freq });
   if (m != null) emitNote(writtenNote(m, g.micInstrument));
+  sendFrame({ t, level, freq, rawFreq: p?.freq ?? null, clarity: p?.clarity ?? 0, gated: false, noSignal, buf: mono, sampleRate: ac.sampleRate });
   sendLevel(level, writtenNote(tracker.note, g.micInstrument), false, { noSignal, freq, clarity: p?.clarity ?? 0 });
 }
 
@@ -360,6 +368,17 @@ export function onMicStatus(fn, life) {
 export function onMicLevel(fn, life) {
   levelFns.add(fn);
   life?.signal.addEventListener('abort', () => levelFns.delete(fn), { once: true });
+}
+
+/**
+ * 20 ms ごとの 1 枚（チューナーと「なぞって採点」用。音の区切りはせず、聞こえた高さをそのまま）
+ * fn({ t: 音の時計（秒）, level, freq: 補正と基準のラを入れた高さ（Hz・鳴る高さ）か null, rawFreq: 聞こえたままの高さ（buf の中の高さ）, clarity,
+ *      gated: アプリの音で聞いていない, noSignal, buf: 直前の約 85 ms の波形（使うあいだだけ。とっておくなら写す）, sampleRate })
+ * freq は「マイクで聞く楽器」の音域の中だけで当てた高さ
+ */
+export function onMicFrame(fn, life) {
+  frameFns.add(fn);
+  life?.signal.addEventListener('abort', () => frameFns.delete(fn), { once: true });
 }
 
 /**

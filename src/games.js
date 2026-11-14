@@ -6,13 +6,18 @@ import { mountQuiz } from './modes/quiz.js';
 import { mountRhythm } from './modes/rhythm.js';
 import { mountTap } from './modes/tap.js';
 import { mountBattle } from './modes/battle.js';
+import { mountSing } from './modes/sing.js';
 
-export const MODES = { flash: mountFlash, quiz: mountQuiz, rhythm: mountRhythm, tap: mountTap, battle: mountBattle };
+export const MODES = { flash: mountFlash, quiz: mountQuiz, rhythm: mountRhythm, tap: mountTap, battle: mountBattle, sing: mountSing };
 
 export const GROUPS = [
   { id: 'read', title: '読む', lead: '五線の音符を読む' },
   { id: 'beat', title: '刻む', lead: 'リズム譜を見て叩く' },
   { id: 'ear', title: '聴く', lead: '鳴った音を聞き取る' },
+  {
+    id: 'play', title: '弾く・歌う', lead: 'マイクで音程を見る',
+    links: [{ href: '#/tuner', icon: 'tuner', tone: 'tuner', title: 'チューナー', lead: '0.1 セントまでのずれ、開放弦（純正な 5 度も）、ビブラートの速さと幅、倍音の強さ。' }],
+  },
 ];
 
 export const GAMES = [
@@ -67,6 +72,12 @@ export const GAMES = [
     lead: '鳴った和音の種類（メジャー・マイナー…）を答えます。根音は毎回変わります。',
     lengths: ['count10', 'count20', 'count50', 'time60', 'endless'],
     modeDefaults: { length: 'count20', feedback: 'study' },
+  },
+  {
+    id: 'sing', group: 'play', mode: 'sing', gen: 'melody', icon: 'sing',
+    title: 'なぞって採点',
+    lead: '流れてくる音の帯を、歌うか弾いてなぞります。高さの線が帯に重なるほど高得点。音程・安定・出だし・ビブラートを、カラオケの採点のように 100 点満点で。声や、弦楽器・管楽器のように音をのばせる楽器向けです（ピアノは音が減っていくので、点が出にくくなります）。',
+    modeDefaults: { bpm: 72, guide: 'start', metronome: true, strict: 'normal' },
   },
 ];
 

@@ -211,6 +211,56 @@ export function playTestTone(f = 440, dur = 2) {
   return dur + 0.03;
 }
 
+/**
+ * 基準の音（チューナー）。f Hz の音を dur 秒、のばして鳴らす（オルガンのようにやわらかい倍音）。
+ * 耳で合わせるとき、うなり（音の揺れ）が消えるところを探す用。鳴っているあいだ、マイクは聞かない（イヤホンのときを除く）
+ * 戻り値は鳴り終わるまでの秒数（音を出せなければ 0）。止めるのは stopDrone か stopAll
+ */
+let drone = null;
+export function playDrone(f, dur = 4) {
+  if (!ensureAudio()) return 0;
+  stopDrone();
+  const t0 = ac.currentTime + 0.02;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(0.32, t0 + 0.08);
+  g.gain.setValueAtTime(0.32, t0 + dur - 0.25);
+  g.gain.linearRampToValueAtTime(0, t0 + dur);
+  g.connect(bus);
+  const oscs = [];
+  for (const [k, a] of [[1, 1], [2, 0.45], [3, 0.22], [4, 0.1]]) {
+    const o = ac.createOscillator();
+    o.frequency.value = f * k;
+    const og = ac.createGain();
+    og.gain.value = a;
+    o.connect(og).connect(g);
+    o.start(t0);
+    o.stop(t0 + dur + 0.05);
+    oscs.push(o);
+  }
+  drone = { g, oscs, end: t0 + dur };
+  oscs[0].onended = () => {
+    if (drone?.oscs === oscs) drone = null;
+  };
+  quietTone = Math.max(quietTone, t0 + dur + TAIL);
+  return dur + 0.02;
+}
+/** 基準の音を止める */
+export function stopDrone() {
+  if (!drone || !ac) return;
+  const now = ac.currentTime;
+  try {
+    drone.g.gain.cancelScheduledValues(now);
+    drone.g.gain.setTargetAtTime(0, now, 0.03);
+    for (const o of drone.oscs) o.stop(now + 0.2);
+  } catch {
+    /* 止め済み */
+  }
+  if (quietTone > now + 0.2 + TAIL && quietTone <= drone.end + TAIL + 1e-6) quietTone = now + 0.2 + TAIL;
+  drone = null;
+}
+export const droneOn = () => !!drone && !!ac && ac.currentTime < drone.end;
+
 /** 音の並びをすぐ鳴らす。戻り値は鳴り終わるまでの秒数 */
 export function playEvents(events, { delay = 0.03, vel = 0.8 } = {}) {
   if (!events?.length || !ensureAudio()) return 0;
@@ -255,6 +305,16 @@ export async function audioReady(waitMs = 600) {
   return ac.state === 'running';
 }
 
+/**
+ * 鳴らした音がスピーカーから出るまでの遅れ（秒）。ブラウザが教えてくれる分だけ（Bluetooth のイヤホンは 0.2 秒ほどになる）。
+ * 分からなければ 0。なぞって採点で、帯の表示とマイクの時刻を、聞こえている音に合わせるのに使う
+ */
+export function outputDelay() {
+  if (!ac) return 0;
+  const d = (Number.isFinite(ac.outputLatency) ? ac.outputLatency : 0) + (Number.isFinite(ac.baseLatency) ? ac.baseLatency : 0);
+  return Math.max(0, Math.min(0.5, d));
+}
+
 /** 音の時計（秒）。リズムの判定と表示はこれに合わせる */
 export const audioNow = () => (ac ? ac.currentTime : performance.now() / 1000);
 
@@ -264,6 +324,7 @@ export const audioQuietAt = () => (volume > 0 ? Math.max(quietVoice, quietTone) 
 /** 鳴っている音を全部すばやく止める（次の問題に移るとき） */
 export function stopAll() {
   if (!ac) return;
+  stopDrone();
   const now = ac.currentTime;
   for (const v of live) {
     try {

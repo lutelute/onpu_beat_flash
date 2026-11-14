@@ -36,5 +36,6 @@ import { pitch } from './pitch.js';
 import { interval } from './interval.js';
 import { chord } from './chord.js';
 import { rhythmPattern } from './rhythmPattern.js';
+import { melody } from './melody.js';
 
-export const GENERATORS = { reading, pitch, interval, chord, rhythmPattern };
+export const GENERATORS = { reading, pitch, interval, chord, rhythmPattern, melody };

@@ -43,6 +43,10 @@ const DRAW = {
   replay: () => svg(`<path d="M12 22 A13 13 0 1 1 15 33"/><path d="M8 15 L12 23 L20 19"/>`),
   pause: () => svg(`<rect x="14" y="12" width="6.5" height="24" rx="2" fill="currentColor" stroke="none"/><rect x="27.5" y="12" width="6.5" height="24" rx="2" fill="currentColor" stroke="none"/>`),
   // 照準の中の音符（オトバトル）
+  // チューナーの針
+  tuner: () => svg(`<path d="M7 33 A17 17 0 0 1 41 33"/><path d="M24 33 L31 18" stroke-width="3"/><circle cx="24" cy="33" r="3" fill="currentColor" stroke="none"/><path d="M24 12 v3 M12.5 17.5 l2 2 M35.5 17.5 l-2 2" stroke-width="2.2" opacity="0.6"/>`),
+  // 音の帯と、なぞる高さの線
+  sing: () => svg(`<rect x="6" y="28" width="13" height="5" rx="2.5" fill="currentColor" stroke="none" opacity="0.45"/><rect x="20" y="20" width="10" height="5" rx="2.5" fill="currentColor" stroke="none" opacity="0.45"/><rect x="31" y="12" width="11" height="5" rx="2.5" fill="currentColor" stroke="none" opacity="0.45"/><path d="M5 31 C10 29 14 33 19 30 S24 22 27 22.5 S33 13 37 14.5 S41 14 43 14" stroke-width="2.6"/>`),
   battle: () => svg(`${staff([18, 24, 30], 6, 42)}${head(24, 24, 0.85)}<circle cx="24" cy="24" r="11.5"/><path d="M24 5 v6 M24 37 v6 M5 24 h6 M37 24 h6" stroke-width="2.4"/>`),
 };
 

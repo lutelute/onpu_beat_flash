@@ -26,7 +26,9 @@ export function mountHome(root, { life }) {
     ...GROUPS.map((grp) =>
       h('section', { class: 'group' },
         h('h2', {}, grp.title, h('small', {}, grp.lead)),
-        h('div', { class: 'gamegrid' }, GAMES.filter((x) => x.group === grp.id).map(card)))),
+        h('div', { class: 'gamegrid' },
+          (grp.links ?? []).map((l) => link(l.href, l.icon, l.title, l.lead, l.tone)),
+          GAMES.filter((x) => x.group === grp.id).map(card)))),
     h('section', { class: 'group' },
       h('h2', {}, '調べる'),
       h('div', { class: 'gamegrid' },
@@ -69,8 +71,8 @@ function hero() {
         h('a', { class: 'btn on-dark', href: '#/guide' }, '読み方ガイド'))));
 }
 
-function link(href, ico, title, lead) {
-  return h('a', { class: 'gamecard', href, dataset: { tone: 'neutral' } },
+function link(href, ico, title, lead, tone = 'neutral') {
+  return h('a', { class: 'gamecard', href, dataset: { tone } },
     h('span', { class: 'ico', html: icon(ico) }),
     h('span', { class: 'gc-t' }, title),
     h('span', { class: 'gc-l' }, lead));

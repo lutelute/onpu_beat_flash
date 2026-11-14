@@ -432,6 +432,114 @@ await scenario('コード聞き取り：マイクで和音（ド・ミ・ソ）�
   }
 });
 
+// ---- チューナーとなぞって採点 ----
+/** 揺れ（vib Hz・±w セント）のある、のばした音。cents は平均律からのずれ。sec 秒（Chrome はくり返し流す） */
+function writeVibrato(path, midi, { cents = 0, vib = 5.5, w = 20, sec = 6, sr = 48000, amp = 0.1 } = {}) {
+  const n = Math.ceil(sec * sr);
+  const b = Buffer.alloc(44 + n * 2);
+  b.write('RIFF', 0); b.writeUInt32LE(36 + n * 2, 4); b.write('WAVE', 8);
+  b.write('fmt ', 12); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22);
+  b.writeUInt32LE(sr, 24); b.writeUInt32LE(sr * 2, 28); b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34);
+  b.write('data', 36); b.writeUInt32LE(n * 2, 40);
+  const f0 = 440 * 2 ** ((midi - 69 + cents / 100) / 12);
+  // くり返しのつなぎ目で高さが跳ばないよう、揺れは sec 秒にちょうど収まる回数にする
+  const rate = Math.round(vib * sec) / sec;
+  let ph = 0;
+  for (let i = 0; i < n; i++) {
+    const t = i / sr;
+    const f = f0 * 2 ** ((w * Math.sin(2 * Math.PI * rate * t)) / 1200);
+    ph += (2 * Math.PI * f) / sr;
+    const s = 0.45 * Math.sin(ph) + 0.8 * Math.sin(2 * ph + 1) + 0.5 * Math.sin(3 * ph + 2) + 0.3 * Math.sin(4 * ph + 0.5) + 0.15 * Math.sin(5 * ph);
+    b.writeInt16LE(Math.round(amp * s * 32767 * 0.5), 44 + i * 2);
+  }
+  writeFileSync(path, b);
+}
+const celloWav = join(work, 'cello-d.wav'); // チェロの D 線（D3）。純正な 5 度の目標（−2 セント）で、5.5 Hz・±20 セントのビブラート
+writeVibrato(celloWav, 50, { cents: -2 });
+const singWav = join(work, 'sing-c.wav'); // ド（C4）を +8 セント高めに、まっすぐのばす
+writeVibrato(singWav, 60, { cents: 8, w: 0, sec: 4 });
+
+await browser.close();
+await launch(celloWav);
+const tnNum = async () => Number(((await text('.tn-cents')) || '').replace('−', '-').replace('±', '').replace(/[^0-9.+-]/g, ''));
+await scenario('チューナー：チェロの D 線を、純正な 5 度の目標で合わせる。ビブラートの速さと幅、倍音も出る', async () => {
+  await open('#/tuner', { global: global({ micInstrument: 'cello', tunerPure: true }) });
+  expect(await waitFor(async () => (await text('.tn-name')) === 'レ' && (await text('.tn-sci')) === 'D3', 8000), `音名: ${await text('.tn-name')} ${await text('.tn-sci')}`);
+  // ビブラートのあいだは揺れの中心で出す（中心は目標のちょうど上）
+  expect(await waitFor(async () => Math.abs(await tnNum()) <= 2.5, 6000), `ずれ: ${await text('.tn-cents')}`);
+  expect(await waitFor(async () => /ビブラート：1 秒に 5\.[2-8] 回・幅 ±1[5-9]|ビブラート：1 秒に 5\.[2-8] 回・幅 ±2[0-2]/.test((await text('.tn-vib')) || ''), 6000), `ビブラート: ${await text('.tn-vib')}`);
+  const active = await page.$$eval('.tn-string.active', (els) => els.map((e) => e.querySelector('b').textContent));
+  expect(active.length === 1 && active[0] === 'レ', `光っている弦: ${active}`);
+  expect(await waitFor(() => page.$eval('.tn-string.active', (e) => e.classList.contains('intune')).catch(() => false), 3000), '合っている印が付かない');
+  // 純正な 5 度の印（D 線は −2）
+  expect((await page.$$eval('.tn-string small', (els) => els.map((e) => e.textContent))).some((t) => /D3 −2/.test(t)), '弦の目標（−2 セント）が出ない');
+  // 倍音：2 倍音がいちばん強い
+  expect(await waitFor(() => page.$$eval('.tn-hb', (els) => els.findIndex((e) => e.classList.contains('top'))).then((i) => i === 1), 3000), '2 倍音がいちばん強いと出ない');
+  const hs = await page.$$eval('.tn-hb i', (els) => els.map((e) => parseFloat(e.style.height) || 0));
+  expect(hs.slice(0, 5).every((x) => x > 30), `倍音の棒: ${hs}`);
+  // 純正をやめると、平均律の D から −2 セント
+  await page.click('.tn-pure input');
+  expect(await waitFor(async () => Math.abs((await tnNum()) + 2) <= 2.5, 6000), `平均律でのずれ: ${await text('.tn-cents')}`);
+  expect(await waitFor(() => page.evaluate((k) => JSON.parse(localStorage.getItem(k)).global.tunerPure === false, KEY), 3000), '純正の設定が残らない');
+  // 高さの動きが描かれている
+  const drawn = await page.$eval('.tn-trace', (c) => {
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+    return n;
+  });
+  expect(drawn > 2000, `高さの動きが描かれていない（${drawn} 点）`);
+});
+
+await scenario('チューナー：開放弦を押すと基準の音が鳴り、鳴っているあいだはマイクで聞かない', async () => {
+  await open('#/tuner', { global: global({ micInstrument: 'cello', tunerPure: false }) });
+  expect(await waitFor(async () => (await text('.tn-name')) === 'レ', 8000), 'レが聞こえない');
+  await page.evaluate(() => [...document.querySelectorAll('.tn-string')].find((b) => b.querySelector('b').textContent === 'ラ').click());
+  expect(await waitFor(async () => /ラ（A3）（220\.00 Hz）を鳴らしています/.test((await text('.tn-drone-say')) || ''), 2000), `鳴らした知らせ: ${await text('.tn-drone-say')}`);
+  expect(await waitFor(async () => /アプリの音/.test((await text('.tn-mode')) || ''), 2000), `止めている知らせ: ${await text('.tn-mode')}`);
+  await page.evaluate(() => document.querySelector('.tn-string.playing').click()); // もう一度押すと止まる
+  expect(await waitFor(async () => !(await text('.tn-drone-say')), 2000), '止まらない');
+});
+
+await browser.close();
+await launch(singWav);
+await scenario('なぞって採点：ドをのばすと、ドの帯だけ合って点が付き、くせ（+8 セント）が出る', async () => {
+  await open('#/game/sing', {
+    global: global({ micInstrument: 'voice' }),
+    gen: { melody: { song: 'longtone', key: 'C', temper: 'equal' } },
+    mode: { sing: { bpm: 140, guide: 'none', metronome: true, strict: 'normal' } },
+    stats: {}, records: {},
+  });
+  expect(await waitFor(async () => /マイクで聞いています/.test((await text('.sing-mic')) || ''), 6000), `マイクの札: ${await text('.sing-mic')}`);
+  await page.click('.actions.sticky .btn.primary');
+  expect(await waitFor(async () => !!(await page.$('.sing-lane')), 3000), '帯が出ない');
+  // 数えのあと、ドの帯では、ずれ（+8 前後）が緑で出る
+  expect(await waitFor(async () => (await text('.sing-note')) === 'ド' && (await page.$eval('.sing-dev', (e) => e.dataset.ok).catch(() => null)) === 'ok', 8000), `いまの音: ${await text('.sing-note')} ${await text('.sing-dev')}`);
+  const dev = Number(((await text('.sing-dev')) || '').replace('−', '-').replace('±', ''));
+  expect(Math.abs(dev - 8) <= 4, `ずれ ${dev}`);
+  // 終わると結果
+  expect(await waitFor(async () => /点/.test((await text('.result-hero h2')) || ''), 25000), '結果が出ない');
+  const title = await text('.result-hero h2');
+  const total = parseFloat(title);
+  // ロングトーン（ド・ミ・ソ・ド・ソ・ミ・ド）のうち、ドは 3 つ（上のドもオクターブを問わず合う）
+  expect(total > 25 && total < 70, `点数 ${title}`);
+  const rows = await page.$$eval('.si-row', (els) => els.map((e) => [e.querySelector('.si-name').firstChild.textContent, e.querySelector('.si-val').textContent]));
+  const doRows = rows.filter(([n]) => n === 'ド');
+  expect(doRows.length === 2 && doRows.every(([, v]) => /^\+([5-9]|1[01])$/.test(v)), `音ごとの音程: ${JSON.stringify(rows)}`);
+  expect(/くせ\s*\+[5-9]|くせ\s*\+1[01]/.test((await text('.result-line')) || ''), `くせ: ${await text('.result-line')}`);
+  // 自己ベストが残る（保存は少しあとでまとめて）
+  const saved = () => page.evaluate((k) => Object.keys(JSON.parse(localStorage.getItem(k)).records ?? {}).some((x) => x.startsWith('sing|longtone|C|equal')), KEY);
+  expect(await waitFor(saved, 4000), '自己ベストが保存されない');
+  // 全体の帯が描かれている
+  const drawn = await page.$eval('.sing-whole', (c) => {
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+    return n;
+  });
+  expect(drawn > 5000, `全体の帯が描かれていない（${drawn} 点）`);
+});
+
 // ------------------------------------------------------------
 await browser.close();
 await server.close();

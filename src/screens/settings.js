@@ -133,7 +133,7 @@ function micPanel(life, onPick) {
   const tnCents = h('span', { class: 'tuner-cents' }, '');
   const tnNeedle = h('span', { class: 'tuner-needle' });
   const tuner = h('div', { class: 'tuner idle', hidden: true },
-    h('span', { class: 'field-label tuner-label' }, 'チューナー'),
+    h('span', { class: 'field-label tuner-label' }, 'チューナー', ' ', h('a', { href: '#/tuner', class: 'tuner-open' }, '大きなチューナーを開く')),
     h('span', { class: 'tuner-row' },
       tnName,
       h('span', { class: 'tuner-scale', 'aria-hidden': 'true' }, h('span', { class: 'tuner-zero' }), tnNeedle),
