@@ -23,15 +23,16 @@ export function mountHome(root, { life }) {
     hero(),
     loggedOut,
     canSave() ? null : h('p', { class: 'notice' }, 'このブラウザでは記録を保存できません（プライベートブラウズなど）。練習はできますが、閉じると記録は消えます。'),
+    // ゲームは段ごとに 1 列の一覧（左右に並べると、目が行き来して選びにくい）
     ...GROUPS.map((grp) =>
       h('section', { class: 'group' },
         h('h2', {}, grp.title, h('small', {}, grp.lead)),
-        h('div', { class: 'gamegrid' },
+        h('div', { class: 'gamelist' },
           (grp.links ?? []).map((l) => link(l.href, l.icon, l.title, l.lead, l.tone)),
           GAMES.filter((x) => x.group === grp.id).map(card)))),
     h('section', { class: 'group' },
       h('h2', {}, '調べる'),
-      h('div', { class: 'gamegrid' },
+      h('div', { class: 'gamelist small' },
         link('#/guide', 'guide', '読み方ガイド', '音部記号ごとの早見表と、テノール記号の読み方のコツ'),
         link('#/stats', 'stats', '苦手な音・成績', 'どの音を間違えやすいか、どれに時間がかかるか'),
         link('#/settings', 'settings', '設定', '音名の呼び方・音量・明るさ・MIDI 鍵盤・マイク'),
@@ -71,19 +72,19 @@ function hero() {
         h('a', { class: 'btn on-dark', href: '#/guide' }, '読み方ガイド'))));
 }
 
-function link(href, ico, title, lead, tone = 'neutral') {
+/** 一覧の 1 行：アイコン・名前と説明・いまの設定（tags）・› 。行のどこを押しても入れる */
+function row(href, ico, title, lead, tone, tags = []) {
   return h('a', { class: 'gamecard', href, dataset: { tone } },
     h('span', { class: 'ico', html: icon(ico) }),
-    h('span', { class: 'gc-t' }, title),
-    h('span', { class: 'gc-l' }, lead));
+    h('span', { class: 'gc-text' }, h('span', { class: 'gc-t' }, title), h('span', { class: 'gc-l' }, lead)),
+    h('span', { class: 'gc-s' }, tags.map((t) => h('span', { class: 'tag' }, t))),
+    h('span', { class: 'chev', 'aria-hidden': 'true' }, '›'));
 }
+
+const link = (href, ico, title, lead, tone = 'neutral') => row(href, ico, title, lead, tone);
 
 function card(game) {
   const gen = genOf(game);
   const s = getSettings('gen', gen.id, gen.defaults, gen.fields);
-  return h('a', { class: 'gamecard', href: `#/game/${game.id}`, dataset: { tone: game.id } },
-    h('span', { class: 'ico', html: icon(game.icon) }),
-    h('span', { class: 'gc-t' }, game.title),
-    h('span', { class: 'gc-l' }, `${game.lead.split('。')[0]}。`),
-    h('span', { class: 'gc-s' }, gen.summary(s).split('／').map((t) => h('span', { class: 'tag' }, t))));
+  return row(`#/game/${game.id}`, game.icon, game.title, `${game.lead.split('。')[0]}。`, game.id, gen.summary(s).split('／'));
 }

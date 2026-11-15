@@ -16,7 +16,7 @@ export const GROUPS = [
   { id: 'ear', title: '聴く', lead: '鳴った音を聞き取る' },
   {
     id: 'play', title: '弾く・歌う', lead: 'マイクで音程を見る',
-    links: [{ href: '#/tuner', icon: 'tuner', tone: 'tuner', title: 'チューナー', lead: '0.1 セントまでのずれ、開放弦（純正な 5 度も）、ビブラートの速さと幅、倍音の強さ。' }],
+    links: [{ href: '#/tuner', icon: 'tuner', tone: 'tuner', title: 'チューナー', lead: '0.1 セントまでのずれ・開放弦・ビブラート・倍音を見る。' }],
   },
 ];
 
