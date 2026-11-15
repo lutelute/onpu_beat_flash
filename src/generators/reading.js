@@ -49,9 +49,10 @@ export const reading = {
     },
     {
       key: 'answer', type: 'segmented', label: '答え方',
+      note: '高さまで：楽譜に書いた高さ（オクターブ）まで合わないと正解になりません。画面では横長の鍵盤で、マイク・MIDI 鍵盤では楽譜どおりの高さで弾いて（歌って）答えます。ギターとコントラバス・ベースは、楽譜より 1 オクターブ低く鳴るのが正しい高さです',
       options: [
         { id: 'name', label: '音名で' },
-        { id: 'piano', label: '鍵盤で（高さまで）' },
+        { id: 'piano', label: '高さまで（オクターブも）' },
       ],
     },
     { key: 'weak', type: 'toggle', label: '苦手な音を多めに出す' },

@@ -59,7 +59,7 @@ export function mountGuide(root) {
         h('li', {}, h('b', {}, 'ヘ音記号として読み、4つ上の音名にする'), '（5度上）。高さはほぼ同じ音域なので、チェロやファゴットの人はこの読み替えが速い。'),
         h('li', {}, h('b', {}, 'ト音記号として読み、1つ下の音名にして1オクターブ下げる'), '。ト音記号に慣れている人向け。'),
         h('li', {}, h('b', {}, '線の音を覚える'), `: 下から ${[0, 2, 4, 6, 8].map((p) => noteName(CLEFS.tenor.bottom + p, naming)).join('・')}。間は ${[1, 3, 5, 7].map((p) => noteName(CLEFS.tenor.bottom + p, naming)).join('・')}。`),
-        h('li', {}, '慣れたら、譜読みフラッシュの「検定」で級を上げ、範囲を「加線1本まで」に広げます。音の高さ（オクターブ）を間違えやすい人は、答え方を「鍵盤で」にします。')),
+        h('li', {}, '慣れたら、譜読みフラッシュの「検定」で級を上げ、範囲を「加線1本まで」に広げます。音の高さ（オクターブ）を間違えやすい人は、答え方を「高さまで（オクターブも）」にします（楽器やマイクで答えるときも、オクターブまで合わないと正解になりません）。')),
       h('div', { class: 'actions' }, h('a', { class: 'btn primary', href: '#/game/flash' }, '譜読みフラッシュで練習する'))),
     h('nav', { class: 'chips toc', 'aria-label': '音部記号' }, CLEF_ORDER.map((c) => h('a', { class: 'chip', href: `#/guide`, onclick: (e) => { e.preventDefault(); document.getElementById(`clef-${c}`)?.scrollIntoView({ behavior: 'smooth' }); } }, CLEFS[c].label))),
     ...CLEF_ORDER.map(card),

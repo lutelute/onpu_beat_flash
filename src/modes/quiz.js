@@ -240,7 +240,8 @@ export function mountQuiz(root, { game, gen, life, query }) {
       if (state === 'ask' && pad.handleKey(e)) e.preventDefault();
     });
 
-    onMidiNote(L, (m) => state === 'ask' && pad.handleMidi(m));
+    // 聞き取りの答えは鳴った高さで比べる（gen.sounding）。譜読みは楽譜に書く高さ（ギターは鳴る音の 1 オクターブ上）
+    onMidiNote(L, (m, sounding) => state === 'ask' && pad.handleMidi(gen.sounding ? sounding : m));
     // コード聞き取り：楽器（マイク）や MIDI 鍵盤で和音を弾いて答えられる。弾いた和音の種類が答え
     // （同じ音の組み合わせになる読みが出す種類の中にあれば、それで答える。出す種類の中から選ぶ）
     if (gen.id === 'chord') {

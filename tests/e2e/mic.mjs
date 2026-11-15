@@ -293,6 +293,30 @@ await scenario('ギターで鳴らした音は、楽譜に書く高さ（1 オ�
   expect(given.every((g) => ['ド（C5）', 'ミ（E5）', 'ソ（G5）'].includes(g)), `1 オクターブ上で受け取っていない: ${answers.join(' | ')}`);
 });
 
+await scenario('高さまで答える譜読み：鍵盤の外のオクターブで弾いた音も、まちがいとして答えに入る', async () => {
+  // ヘ音記号の五線の近く（F2〜B3 → 鍵盤は C2〜B3）。鳴らすのは C4・E4・G4 なので、どれも鍵盤の外で、正解にはならない
+  await open('#/game/quick', {
+    global: global(),
+    gen: { reading: { clefs: ['bass'], range: 'near', accidentals: 'none', answer: 'piano', weak: false } },
+    mode: { quick: { length: 'count20', feedback: 'fast' } },
+  });
+  const answers = await collectAnswers(3);
+  expect(answers.every((s) => !s.startsWith('✓')), `高さの合わない音で正解になった: ${answers.join(' | ')}`);
+  const given = answers.map((s) => s.split('あなたの答え: ')[1]);
+  expect(given.every((g) => ['ド（C4）', 'ミ（E4）', 'ソ（G4）'].includes(g)), `弾いた高さで答えになっていない: ${answers.join(' | ')}`);
+});
+
+await scenario('音名当て（高さまで）：ギターでも、聞こえた高さのまま比べる（楽譜の高さに上げない）', async () => {
+  await open('#/game/pitch', {
+    global: global({ micInstrument: 'guitar', micPhones: true }),
+    gen: { pitch: { set: 'white', ref: 'none', register: 'mid', answer: 'piano', weak: false } },
+    mode: { pitch: { length: 'count20', feedback: 'fast' } },
+  });
+  const answers = await collectAnswers(3);
+  const given = answers.map((s) => (s.startsWith('✓') ? s.slice(2) : s.split('あなたの答え: ')[1]));
+  expect(given.every((g) => ['ド（C4）', 'ミ（E4）', 'ソ（G4）'].includes(g)), `聞こえた高さで受け取っていない: ${answers.join(' | ')}`);
+});
+
 await scenario('オフにするとメーターと楽器の選択が消え、設定が保存される', async () => {
   await open('#/settings', { global: global() });
   expect(await waitFor(async () => /マイクで聞いています/.test((await text('.mic-status')) || '')), 'マイクがオンにならない');

@@ -38,6 +38,7 @@ const SETTINGS = {
   pitch: [
     { set: 'white', ref: 'C', register: 'mid', weak: false },
     { set: 'chroma', ref: 'none', register: 'wide', weak: true },
+    { set: 'white', ref: 'A', register: 'two', answer: 'piano', weak: false },
   ],
   interval: [
     { set: ['M2', 'M3', 'P4', 'P5', 'P8'], dir: 'up', weak: false },
@@ -129,6 +130,33 @@ test('音名当ての正解は鳴らした音と一致', () => {
       assert.ok(m >= 36 && m <= 84);
     }
   }
+});
+
+test('音名当て（高さまで）：正解は鳴らした音の MIDI 番号で、鍵盤の中にある。音名で答える記録の鍵は前と同じ', () => {
+  const g = GENERATORS.pitch;
+  const rng = makeRng(4);
+  for (const set of ['white', 'chroma']) {
+    for (const register of ['mid', 'two', 'wide']) {
+      const s = { set, ref: 'C', register, answer: 'piano', weak: false };
+      const pad = g.answerPad(s);
+      assert.equal(pad.type, 'piano');
+      assert.equal(pad.black, set === 'chroma');
+      const lo = midiOfStep(pad.lo);
+      const hi = midiOfStep(pad.hi);
+      for (let i = 0; i < 200; i++) {
+        const q = g.make(s, { rng });
+        const m = q.prompt.events.at(-1).midi[0];
+        assert.equal(q.answer, String(m));
+        assert.ok(m >= lo && m <= hi + (set === 'chroma' ? 1 : 0), `${m} が鍵盤（${lo}〜${hi}）の外`);
+        // まちがえた答え（1 オクターブ上）を聞くと、その高さが鳴る
+        assert.equal(q.compare(String(m + 12)).at(-1).midi[0], m + 12);
+      }
+    }
+  }
+  assert.equal(g.answerLabel('60', { answer: 'piano' }, 'doremi'), 'ド（C4）');
+  assert.equal(g.signature({ set: 'white', ref: 'C', register: 'mid', answer: 'name' }), 'white|C|mid');
+  assert.equal(g.signature({ set: 'white', ref: 'C', register: 'mid', answer: 'piano' }), 'white|C|mid|piano');
+  assert.equal(g.sounding, true);
 });
 
 test('音程の半音数が合っている', () => {

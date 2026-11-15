@@ -32,7 +32,7 @@ const modeFields = () => [
   {
     key: 'pad', type: 'segmented', label: '答えるところ',
     options: [{ id: 'keys', label: '鍵盤' }, { id: 'buttons', label: 'ボタン' }],
-    note: '答え方を「鍵盤で（高さまで）」にしているときは、高さまで答える横長の鍵盤になります',
+    note: '答え方を「高さまで（オクターブも）」にしているときは、高さまで答える横長の鍵盤になります',
   },
   { key: 'bpm', type: 'slider', label: 'テンポ', min: 40, max: 200, step: 4, format: (v) => `♩ = ${v}` },
   { key: 'density', type: 'segmented', label: '音符の間隔', options: Object.entries(DENSITY).map(([id, d]) => ({ id, label: d.label })) },

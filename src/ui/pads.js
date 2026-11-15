@@ -21,6 +21,7 @@ export function makePad(spec, { naming, keyHints, onAnswer }) {
   let enabled = true;
   let keyOf = () => null; // KeyboardEvent → id
   let midiOf = () => null; // MIDI 番号 → id
+  let outside = () => false; // ボタンの無い id（鍵盤の外の高さ）も答えにするか
 
   const press = (id) => {
     if (!enabled || !buttons.has(id)) return;
@@ -96,6 +97,9 @@ export function makePad(spec, { naming, keyHints, onAnswer }) {
       scroller,
       h('div', { class: 'piano-note' }, whites.length * 30 > 360 ? '● の付いた鍵が中央のド（C4）。入りきらないときは横にずらせます' : '● の付いた鍵が中央のド（C4）'));
     midiOf = (m) => String(m);
+    // 鍵盤の外のオクターブで弾いた（歌った）音も答えにする（まちがいになる）。黙っていると、聞こえていないのかと思うので
+    // 黒鍵の無い鍵盤（臨時記号なし）では、黒鍵の音は答えにしない（音名で答えるときと同じ）
+    outside = (m) => spec.black || WHITE_PCS.includes(((m % 12) + 12) % 12);
   } else if (spec.type === 'chroma' && spec.grid) {
     // 半音の順に 6 つずつ（ド・ド♯・レ・レ♯・ミ・ファ／ファ♯・ソ・ソ♯・ラ・ラ♯・シ）
     el = h('div', { class: 'pad pad-grid12', role: 'group', 'aria-label': '12の音' },
@@ -161,8 +165,13 @@ export function makePad(spec, { naming, keyHints, onAnswer }) {
     /** MIDI 鍵盤の音で押されたら true */
     handleMidi(midi) {
       const id = midiOf(midi);
-      if (id == null || !buttons.has(id)) return false;
-      press(id);
+      if (id == null) return false;
+      if (buttons.has(id)) {
+        press(id);
+        return true;
+      }
+      if (!enabled || !outside(midi)) return false;
+      onAnswer(id);
       return true;
     },
     mark(id, cls) {

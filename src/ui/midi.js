@@ -13,9 +13,12 @@ const listeners = new Set(); // つながり具合が変わったら知らせる
 
 export const midiSupported = () => typeof navigator !== 'undefined' && !!navigator.requestMIDIAccess;
 
-/** 鳴った音（MIDI 番号）を、いま答えを待っている入力へ渡す。マイク（mic.js）もここを通す */
-export function emitNote(midi) {
-  target?.(midi);
+/**
+ * 鳴った音（MIDI 番号）を、いま答えを待っている入力へ渡す。マイク（mic.js）もここを通す
+ * midi は楽譜に書く高さ、sounding は鳴った高さ（ギターとコントラバス・ベースのマイクだけ 12 ちがう）
+ */
+export function emitNote(midi, sounding = midi) {
+  target?.(midi, sounding);
 }
 
 function onMessage(e) {
@@ -106,7 +109,7 @@ export function onMidiStatus(fn, life) {
   life?.signal.addEventListener('abort', () => listeners.delete(fn), { once: true });
 }
 
-/** 画面の場面（life）が続くあいだ、鍵盤（とマイク）の音を fn(midi) に渡す */
+/** 画面の場面（life）が続くあいだ、鍵盤（とマイク）の音を fn(midi, sounding) に渡す（emitNote） */
 export function onMidiNote(life, fn) {
   target = fn;
   life.signal.addEventListener('abort', () => { if (target === fn) target = null; }, { once: true });

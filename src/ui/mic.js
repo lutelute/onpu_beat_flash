@@ -337,7 +337,7 @@ function poll() {
     if (c) emitChord({ ...c, from: 'mic' });
   } else chordTr = null;
   const m = tracker.feed({ t, level, freq: weak ? null : freq });
-  if (m != null) emitNote(writtenNote(m, g.micInstrument));
+  if (m != null) emitNote(writtenNote(m, g.micInstrument), m);
   sendFrame({ t, level, freq, rawFreq: p?.freq ?? null, clarity: p?.clarity ?? 0, weak, gated: false, noSignal, buf: mono, sampleRate: ac.sampleRate });
   sendLevel(level, writtenNote(tracker.note, g.micInstrument), false, { noSignal, freq: weak ? null : freq, clarity: weak ? 0 : p?.clarity ?? 0 });
 }
