@@ -6,6 +6,7 @@
 // 高さはマイクの 1 枚（20 ms）ごと（ui/mic.js の onMicFrame）。音域は「マイクで聞く楽器」に合わせる
 import { h } from '../ui/dom.js';
 import { globalSettings, setGlobal } from '../core/store.js';
+import { micDiagView } from '../ui/micDiag.js';
 import { enableMic, micStatus, onMicStatus, onMicFrame, onMicLevel, hearing, micSupported } from '../ui/mic.js';
 import { MIC_INSTRUMENTS, REF_A, freqToMidi } from '../core/pitch.js';
 import { openStrings, nearestString, harmonics, harmonicCents, analyzeVibrato } from '../core/intonation.js';
@@ -138,7 +139,9 @@ export function mountTuner(root, { life }) {
     showMic(micStatus());
   } }, 'マイクをオンにする');
   const micCard = h('section', { class: 'card tn-mic', hidden: true }, h('p', {}, 'チューナーはマイクで聞きます。'), micBtn, micLine);
+  const diag = micDiagView(life);
   function showMic(st) {
+    diag.hidden = !globalSettings().mic;
     const on = globalSettings().mic && st.state === 'on';
     micCard.hidden = on;
     micBtn.hidden = st.state === 'unsupported';
@@ -179,11 +182,14 @@ export function mountTuner(root, { life }) {
     droneSay,
     h('section', { class: 'card tn-trace-card' }, h('h2', {}, '高さの動き', h('small', {}, '直前 6 秒。緑の帯が ±3 セント')), canvas, vibEl),
     harmCard,
+    diag,
     status,
   );
 
   // ---- 1 枚ごと ----
   onMicFrame((f) => {
+    // 音の処理を作り直すと、時計が 0 から数え直しになる（iPhone・iPad）。それまでの線は消す
+    if (f.t < lastT - 0.5) hist.length = 0;
     lastT = f.t;
     if (f.gated || !f.freq || f.clarity < 0.8) {
       hist.push({ t: f.t, m: null, c: null, key: '' });

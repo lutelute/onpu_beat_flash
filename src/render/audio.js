@@ -339,6 +339,26 @@ export function stopAll() {
   quietVoice = Math.min(quietVoice, now + 0.12 + TAIL);
 }
 
+/**
+ * 音の処理を作り直す。iPhone・iPad は、マイクを開く前に作った音の処理には、マイクの音が流れてこなかったり、
+ * 時計が止まったままになったりすることがあるので、マイクを開いたあとに作り直す（ui/mic.js）。
+ * 鳴っている音は止まり、時計（audioNow）は 0 から数え直す。戻り値は新しい音の処理（作れなければ null）
+ */
+export function restartAudio() {
+  const old = ac;
+  if (old) {
+    stopAll();
+    if (old.state !== 'closed') old.close().catch(() => {});
+  }
+  ac = null;
+  bus = null;
+  master = null;
+  drone = null;
+  quietVoice = 0;
+  quietTone = 0;
+  return ensureAudio();
+}
+
 // ---- 効果音（やわらかい音だけ。耳ざわりな矩形波は使わない） ----
 function tone(f, t, { d = 0.12, peak = 0.1, type = 'sine', glide } = {}) {
   const o = ac.createOscillator();

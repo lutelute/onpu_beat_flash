@@ -6,6 +6,7 @@ import { globalFields } from '../core/globals.js';
 import { setVolume, playEvents } from '../render/audio.js';
 import { applyTheme } from '../ui/theme.js';
 import { enableMidi, midiStatus, onMidiStatus, onMidiNote } from '../ui/midi.js';
+import { micDiagView } from '../ui/micDiag.js';
 import { enableMic, micStatus, onMicStatus, onMicLevel, micFloor, measureRoom, hearing, listMics, micDeviceId, reopenMic, onMicDevices, checkMicPitch, micName } from '../ui/mic.js';
 import { midiLabel } from '../core/music.js';
 import { pickSens, micSens, tune, judgeMicPitch } from '../core/pitch.js';
@@ -214,9 +215,11 @@ function micPanel(life, onPick) {
   const checkRow = h('div', { class: 'mic-check', hidden: true },
     h('div', { class: 'mic-check-btns' }, bySpeaker, byInstrument), checkSaid, fixRow);
 
+  const diag = micDiagView(life);
   const show = (st) => {
     const on = globalSettings().mic;
     line.textContent = on ? st.text : '';
+    diag.hidden = !on;
     const working = on && st.state === 'on';
     meter.hidden = !working;
     say2.hidden = !working;
@@ -248,5 +251,5 @@ function micPanel(life, onPick) {
   }, life);
   show(micStatus());
   onMicStatus(show, life);
-  return { el: h('div', {}, line, deviceRow, meter, say2, tuner, calibRow, checkRow), show, said: say };
+  return { el: h('div', {}, line, deviceRow, meter, say2, tuner, calibRow, checkRow, diag), show, said: say };
 }

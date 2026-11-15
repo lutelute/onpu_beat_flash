@@ -501,6 +501,62 @@ await scenario('チューナー：開放弦を押すと基準の音が鳴り、�
   expect(await waitFor(async () => !(await text('.tn-drone-say')), 2000), '止まらない');
 });
 
+// 音の処理（AudioContext）を数え、frozen.first なら最初の 1 つの時計を止める（iPad でマイクを開いたあと時計が止まるのをまねる）
+const countCtx = (freezeFirst) => page.evaluateOnNewDocument((freeze) => {
+  const Orig = window.AudioContext;
+  const desc = Object.getOwnPropertyDescriptor(BaseAudioContext.prototype, 'currentTime');
+  const frozen = new WeakSet();
+  Object.defineProperty(BaseAudioContext.prototype, 'currentTime', { configurable: true, get() { return frozen.has(this) ? 5 : desc.get.call(this); } });
+  window.__ctxCount = 0;
+  window.AudioContext = class extends Orig {
+    constructor(o) {
+      super(o);
+      window.__ctxCount++;
+      if (freeze && window.__ctxCount === 1) frozen.add(this);
+    }
+  };
+}, freezeFirst);
+const diagText = async () => {
+  await page.evaluate(() => {
+    const d = document.querySelector('.mic-diag');
+    if (d && !d.open) d.querySelector('summary').click();
+  });
+  // 時計が進んでいるかは 1 秒ごとに確かめる
+  await waitFor(async () => !/確かめています/.test((await text('.mic-diag-body')) || '確かめています'), 4000);
+  return (await text('.mic-diag-body')) || '';
+};
+
+await scenario('iPad：マイクを開いたあとに音の処理を作り直して、チューナーで聞こえる。くわしい様子が出る', async () => {
+  const ua = await page.browser().userAgent();
+  await page.setUserAgent('Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1');
+  const id = await countCtx(false);
+  try {
+    await open('#/tuner', { global: global({ micInstrument: 'cello', tunerPure: false }) });
+    expect(await waitFor(async () => (await text('.tn-name')) === 'レ', 8000), `音名: ${await text('.tn-name')}`);
+    // 開いたときに 1 つ、マイクを開いたあとに作り直して 1 つ
+    const n = await page.evaluate(() => window.__ctxCount);
+    expect(n === 2, `音の処理を作った数 ${n}`);
+    const d = await diagText();
+    expect(/動いている・時計は進んでいる/.test(d) && /作り直した回数0 回（iPhone・iPad）/.test(d) && /dB（無音とみなす下限 −48 dB）/.test(d), `くわしい様子: ${d}`);
+  } finally {
+    await page.removeScriptToEvaluateOnNewDocument(id.identifier);
+    await page.setUserAgent(ua);
+  }
+});
+
+await scenario('音の時計が止まったら、音の処理を作り直してつなぎ直す', async () => {
+  const id = await countCtx(true);
+  try {
+    await open('#/tuner', { global: global({ micInstrument: 'cello', tunerPure: false }) });
+    expect(await waitFor(async () => (await page.evaluate(() => window.__ctxCount)) === 2, 4000), `音の処理を作った数 ${await page.evaluate(() => window.__ctxCount)}`);
+    expect(await waitFor(async () => (await text('.tn-name')) === 'レ', 8000), `音名: ${await text('.tn-name')}`);
+    const d = await diagText();
+    expect(/時計は進んでいる/.test(d) && /作り直した回数1 回/.test(d), `くわしい様子: ${d}`);
+  } finally {
+    await page.removeScriptToEvaluateOnNewDocument(id.identifier);
+  }
+});
+
 await browser.close();
 await launch(singWav);
 await scenario('なぞって採点：ドをのばすと、ドの帯だけ合って点が付き、くせ（+8 セント）が出る', async () => {

@@ -4,7 +4,7 @@
 //   ・20 ms ごとに、直前の 2048 点（約 43 ms）の波形を見る。低い音だけ 4096 点（約 85 ms）で当て直す。高さの当て方は core/pitch.js
 //   ・設定で楽器を選ぶと、その音域だけを聞く。ギターとコントラバス・ベースは 1 オクターブ上げて（楽譜に書く高さで）渡す
 //   ・設定の「マイクの感度」で、無音とみなす下限が 5 段に変わる（core/pitch.js の MIC_SENS）
-import { ensureAudio, audioNow, audioQuietAt, playTestTone } from '../render/audio.js';
+import { ensureAudio, restartAudio, audioNow, audioQuietAt, playTestTone } from '../render/audio.js';
 import { emitNote, emitChord, chordListening } from './midi.js';
 import { multiPitch, makeChordTracker } from '../core/chordListen.js';
 import { globalSettings } from '../core/store.js';
@@ -33,7 +33,18 @@ let calib = null; // マイクの高さを確かめているあいだ { raw: [{ 
 let chordTr = null; // 和音を聞いているあいだの、和音の区切り（コード聞き取り）
 let chordFor = null; // chordTr を作ったときの { allow, sens }
 let tick = 0;
+// 音の時計が進んでいるか（iPhone・iPad で、マイクを開いたあと音の処理が止まったままになることがある）
+let clock = null; // { wall: 実際の時刻（秒）, t: 音の時計 }
+let clockOk = null; // 進んでいる true・止まっている false・まだ分からない null
+let restarts = 0; // 止まっていたので音の処理を作り直した回数（マイクを開くたびに 0 から）
+const MAX_RESTARTS = 2;
+let lastLevel = null; // くわしい様子（micDiag）用：直前の大きさと、前に読んだときからいちばん大きかった大きさ
+let peakSince = 0;
 const NO_SIGNAL_SEC = 1.5;
+const wallNow = () => performance.now() / 1000;
+/** iPhone・iPad（iPadOS の Safari は Mac と名のるので、触れる画面かどうかでも見る） */
+export const appleTouch = () =>
+  typeof navigator !== 'undefined' && (/iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1));
 const statusFns = new Set();
 const levelFns = new Set();
 const frameFns = new Set();
@@ -122,23 +133,15 @@ async function open() {
     for (const t of s.getTracks()) t.stop();
     return;
   }
-  start(ac, s);
+  // iPhone・iPad は、マイクを開く前に作った音の処理には、マイクの音が流れてこないことがある（時計が止まる・何も届かない）。
+  // マイクを開いたあとに作り直す（動き出さなければ、画面に触れたときに起きる）
+  start(appleTouch() ? restartAudio() ?? ac : ac, s);
 }
 
 function start(ac, s) {
   stream = s;
-  const source = ac.createMediaStreamSource(s);
-  const analyser = ac.createAnalyser();
-  // 8192 点（約 170 ms）を取る。単音はふだん直前の 2048 点（約 43 ms）、低い音だけ 4096 点で当てる（detectMic）。
-  // 和音は 8192 点全部で、鳴っている音を探す（multiPitch。周波数を細かく分けるため長め）
-  analyser.fftSize = ac.sampleRate > 64000 ? 16384 : 8192;
-  analyser.smoothingTimeConstant = 0;
-  // 出口までつながっていないと波形が流れないブラウザがあるので、音量 0 で出口へ（スピーカーからは鳴らない）
-  const sink = ac.createGain();
-  sink.gain.value = 0;
-  source.connect(analyser);
-  analyser.connect(sink).connect(ac.destination);
-  nodes = { ac, source, analyser, sink, buf: new Float32Array(analyser.fftSize), bytes: null };
+  restarts = 0;
+  attach(ac, s);
   sens = globalSettings().micSens;
   inst = globalSettings().micInstrument;
   tracker = makeNoteTracker(micTracker(sens, inst));
@@ -153,12 +156,32 @@ function start(ac, s) {
     why = lostHidden ? 'マイクが切れました。この画面に戻ると、つなぎ直します' : 'マイクが外れました。つなぎ直してから、もう一度オンにしてください';
     notify();
   });
-  timer = setInterval(poll, POLL_MS);
   state = 'on';
   why = '';
 }
 
-function close() {
+/** マイクの音を ac につなぐ（音の処理を作り直したときも、同じマイクのままここだけやり直す） */
+function attach(ac, s) {
+  const source = ac.createMediaStreamSource(s);
+  const analyser = ac.createAnalyser();
+  // 8192 点（約 170 ms）を取る。単音はふだん直前の 2048 点（約 43 ms）、低い音だけ 4096 点で当てる（detectMic）。
+  // 和音は 8192 点全部で、鳴っている音を探す（multiPitch。周波数を細かく分けるため長め）
+  analyser.fftSize = ac.sampleRate > 64000 ? 16384 : 8192;
+  analyser.smoothingTimeConstant = 0;
+  // 出口までつながっていないと波形が流れないブラウザがあるので、音量 0 で出口へ（スピーカーからは鳴らない）
+  const sink = ac.createGain();
+  sink.gain.value = 0;
+  source.connect(analyser);
+  analyser.connect(sink).connect(ac.destination);
+  nodes = { ac, source, analyser, sink, buf: new Float32Array(analyser.fftSize), bytes: null };
+  clock = null;
+  clockOk = null;
+  zeroSince = null;
+  timer = setInterval(poll, POLL_MS);
+}
+
+/** マイクの音を音の処理から外す（マイクそのものは閉じない） */
+function detach() {
   clearInterval(timer);
   timer = 0;
   if (nodes) {
@@ -170,6 +193,12 @@ function close() {
     }
     nodes = null;
   }
+}
+
+function close() {
+  detach();
+  lastLevel = null;
+  clockOk = null;
   if (stream) for (const t of stream.getTracks()) t.stop();
   stream = null;
   label = '';
@@ -224,7 +253,31 @@ function poll() {
     tracker.reset(true);
   }
   const { ac, analyser, buf } = nodes;
-  if (ac.state !== 'running') return sendLevel(0, null, false, { paused: true }); // 画面に触れるまで音は動かない
+  const wall = wallNow();
+  if (ac.state !== 'running') {
+    // 画面に触れるまで音は動かない
+    clock = null;
+    lastLevel = null;
+    return sendLevel(0, null, false, { paused: true });
+  }
+  // 音の時計が 1 秒たっても進まなければ、音の処理を作り直してつなぎ直す（iPhone・iPad。2 回まで）。
+  // 時計が止まると、マイクの波形も新しくならない（何を弾いても「—」のまま）
+  if (!clock) clock = { wall, t: ac.currentTime };
+  else if (wall - clock.wall >= 1) {
+    const moved = ac.currentTime - clock.t;
+    const visible = typeof document === 'undefined' || document.visibilityState === 'visible';
+    // 裏に回っていたあいだ（呼ばれる間が大きく空いた）は数えない
+    if (visible && wall - clock.wall < 3) clockOk = moved >= 0.2 * (wall - clock.wall);
+    clock = { wall, t: ac.currentTime };
+    if (clockOk === false && restarts < MAX_RESTARTS && stream) {
+      restarts++;
+      const s = stream;
+      detach();
+      const nac = restartAudio();
+      if (nac) attach(nac, s);
+      return;
+    }
+  }
   if (analyser.getFloatTimeDomainData) analyser.getFloatTimeDomainData(buf);
   else {
     // 古い Safari
@@ -236,10 +289,12 @@ function poll() {
   const mono = buf.subarray(buf.length / 2); // 単音は直前の約 85 ms（そのうち直前の半分が約 43 ms）
   const short = mono.length / 2;
   const level = rms(mono.subarray(short));
-  // 波形が 0 ばかり（どんな静かな部屋でも、マイクには少しは音が入る）
-  if (level < 1e-6) zeroSince ??= t;
+  lastLevel = level;
+  peakSince = Math.max(peakSince, level);
+  // 波形が 0 ばかり（どんな静かな部屋でも、マイクには少しは音が入る）。実際の時刻で数える（音の時計が止まっていても分かるように）
+  if (level < 1e-6) zeroSince ??= wall;
   else zeroSince = null;
-  const noSignal = zeroSince != null && t - zeroSince >= NO_SIGNAL_SEC;
+  const noSignal = zeroSince != null && wall - zeroSince >= NO_SIGNAL_SEC;
   const quiet = t >= audioQuietAt();
   const spec = micInstrument(g.micInstrument);
   // マイクの高さを確かめているあいだは、アプリの音（確かめる音）のあいだも高さを集める（補正の前の、聞こえたままの高さ）
@@ -289,6 +344,24 @@ if (typeof document !== 'undefined') {
     lostHidden = false;
     enableMic(true);
   });
+}
+
+/**
+ * くわしい様子（うまく聞こえないときに、どこで止まっているかを見る）
+ * peak は前に読んだときから、いちばん大きかった大きさ（rms）
+ */
+export function micDiag() {
+  const ac = nodes?.ac;
+  const tr = stream?.getAudioTracks()[0];
+  const st = tr?.getSettings?.() ?? {};
+  const peak = lastLevel == null ? null : peakSince;
+  peakSince = 0;
+  return {
+    state, label,
+    ctxState: ac?.state ?? null, ctxRate: ac?.sampleRate ?? null, micRate: st.sampleRate ?? null,
+    track: tr?.readyState ?? null, muted: tr?.muted ?? null,
+    clock: clockOk, level: lastLevel, peak, floor: sensFloor(sens), restarts, appleTouch: appleTouch(),
+  };
 }
 
 /** いま聞いているマイクの名前（補正を覚える鍵。「既定 - 」などは外す） */
