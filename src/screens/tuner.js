@@ -10,7 +10,7 @@ import { micDiagView } from '../ui/micDiag.js';
 import { enableMic, micStatus, onMicStatus, onMicFrame, onMicLevel, hearing, micSupported } from '../ui/mic.js';
 import { MIC_INSTRUMENTS, REF_A, freqToMidi } from '../core/pitch.js';
 import { openStrings, harmonics, harmonicCents } from '../core/intonation.js';
-import { makeTunerTrack, easeNeedle } from '../core/tunerTrack.js';
+import { makeTunerTrack, easeNeedle, needleTau, TUNER } from '../core/tunerTrack.js';
 import { playDrone, stopDrone, droneOn } from '../render/audio.js';
 import { NAMINGS, WHITE_PCS, chromaNameFlat, midiSci } from '../core/music.js';
 
@@ -194,7 +194,7 @@ export function mountTuner(root, { life }) {
   // ---- 描く（画面の更新ごと） ----
   let shown = 0; // 針（なめらかに動かす）
   let prevNow = 0;
-  let textAt = -1; // ずれの数字を書いた時刻（続いているあいだは 0.2 秒ごとに書き直す）
+  let textAt = -1; // ずれの数字を書いた時刻（続いているあいだは 0.15 秒ごとに書き直す）
   let textKey = '';
   let raf = 0;
   let colors = null;
@@ -216,11 +216,12 @@ export function mountTuner(root, { life }) {
     const { ref, value, vib } = r;
     if (value != null && ref) {
       const p = noteParts(ref.midi, naming);
-      shown = easeNeedle(shown, Math.max(-50, Math.min(50, value)), dt);
-      // 数字は 0.2 秒ごと（細かく踊らないように）。音が変わったとき・聞こえ始めたときは、すぐ書き直す
+      shown = easeNeedle(shown, Math.max(-50, Math.min(50, value)), dt, needleTau(r));
+      // 数字は 0.15 秒ごと（細かく踊らないように）。音が変わったとき・聞こえ始めたときは、すぐ書き直す
+      // 楽器はならした高さそのもの、声のように揺れる音は針（さらにならしたもの）を出す
       const key = `${ref.key}|${live}`;
-      if (live && (key !== textKey || now - textAt >= 200)) {
-        const v = key !== textKey ? value : shown;
+      if (live && (key !== textKey || now - textAt >= TUNER.textEvery * 1000)) {
+        const v = key !== textKey || Math.abs(value) > 50 ? value : value * (1 - r.wobbly) + shown * r.wobbly;
         textAt = now;
         nameEl.textContent = p.name;
         sciEl.textContent = p.sci;

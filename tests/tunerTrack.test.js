@@ -75,6 +75,41 @@ test('チューナーの針：ビブラートは揺れの中心。開放弦は�
   assert.ok(Math.abs(r.value) < 2.5, `針 ${r.value}`);
 });
 
+// 決まった並びの小さなばらつき（-1〜1）
+const jitter = (seed) => {
+  let a = seed;
+  return () => ((a = (a * 1664525 + 1013904223) >>> 0) / 4294967296) * 2 - 1;
+};
+
+test('チューナーの針：同じ音のまま高さを直すと、すばやく追う（止まっているときは揺れない）', () => {
+  const tt = makeTunerTrack();
+  const r = jitter(5);
+  // ラ（A3）。1 秒で +0 → +20 セントに直す。1 枚ごとに ±0.3 セントばらつく
+  const rs = feedAll(tt, 0, 2, (t) => ({ m: 57 + ((t < 1 ? 0 : 20) + 0.3 * r()) / 100 }));
+  const before = rs.filter((x) => x.t >= 0.5 && x.t < 1).map((x) => x.value);
+  assert.ok(Math.max(...before) - Math.min(...before) < 0.5, `止まっているのに針が動く: ${before.map((v) => v.toFixed(2)).join(' ')}`);
+  const hit = rs.find((x) => x.t >= 1 && x.value >= 18);
+  assert.ok(hit && hit.t - 1 <= 0.2, `9 割動くまで ${hit ? (hit.t - 1).toFixed(2) : '—'} 秒`);
+  assert.equal(rs.at(-1).wobbly, 0);
+  // 糸巻きをゆっくり回す（1 秒に 20 セント）：遅れは 0.15 秒ぶん（3 セント）より小さい
+  const t2 = makeTunerTrack();
+  const ramp = feedAll(t2, 0, 3, (t) => ({ m: 57 + (t < 1 ? -20 : -20 + (t - 1) * 20) / 100 }));
+  const lagC = ramp.filter((x) => x.t >= 1.5 && x.t < 3).map((x) => -20 + (x.t - 1) * 20 - x.value);
+  assert.ok(Math.max(...lagC) < 3, `坂の遅れ ${Math.max(...lagC).toFixed(2)} セント`);
+});
+
+test('チューナーの針：声のように 1 枚ごとに大きく揺れる音は、揺れの中心を出す', () => {
+  const tt = makeTunerTrack();
+  const r = jitter(9);
+  // +6 セントを中心に、1 枚ごとに ±12 セント揺れる
+  const rs = feedAll(tt, 0, 3, () => ({ m: 57 + (6 + 12 * r()) / 100 }));
+  const late = rs.filter((x) => x.t >= 1.5);
+  assert.ok(late.every((x) => x.wobbly === 1), `揺れの大きさ ${late.at(-1).wobbly}`);
+  // 1 枚ごとのばらつき（標準偏差 約 7 セント）より、ずっと中心の近くに出る
+  const dev = late.map((x) => Math.abs(x.value - 6));
+  assert.ok(dev.reduce((s, x) => s + x, 0) / dev.length < 2.5 && Math.max(...dev) < 8, `針: ${late.filter((_, i) => i % 5 === 0).map((x) => x.value.toFixed(1)).join(' ')}`);
+});
+
 test('針の動き：画面の更新の速さによらない（60 Hz で 2 回 ≒ 30 Hz で 1 回）', () => {
   const a = easeNeedle(easeNeedle(0, 10, 1 / 60), 10, 1 / 60);
   const b = easeNeedle(0, 10, 1 / 30);
