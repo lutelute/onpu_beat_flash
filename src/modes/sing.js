@@ -197,7 +197,7 @@ export function mountSing(root, { game, gen, life, query }) {
       if (f.t < countAt - 0.2 || t > mel.length + 0.3) return;
       // メトロノームの音（高い短い音）を拾った枚は数えない
       if (f.freq && f.freq > 1000 && clicks.some((c) => f.t >= c && f.t < c + 0.07)) return;
-      const m = f.freq ? freqToMidi(f.freq) : null;
+      const m = f.freq && !f.weak ? freqToMidi(f.freq) : null; // 下限より小さい枚は数えない（今までどおり）
       trail.push({ t, m });
       const r = t >= 0 ? scorer.feed(t, m) : null;
       if (r) {

@@ -9,7 +9,8 @@ import { globalSettings, setGlobal } from '../core/store.js';
 import { micDiagView } from '../ui/micDiag.js';
 import { enableMic, micStatus, onMicStatus, onMicFrame, onMicLevel, hearing, micSupported } from '../ui/mic.js';
 import { MIC_INSTRUMENTS, REF_A, freqToMidi } from '../core/pitch.js';
-import { openStrings, nearestString, harmonics, harmonicCents, analyzeVibrato } from '../core/intonation.js';
+import { openStrings, harmonics, harmonicCents } from '../core/intonation.js';
+import { makeTunerTrack, easeNeedle } from '../core/tunerTrack.js';
 import { playDrone, stopDrone, droneOn } from '../render/audio.js';
 import { NAMINGS, WHITE_PCS, chromaNameFlat, midiSci } from '../core/music.js';
 
@@ -35,12 +36,7 @@ export function noteParts(midi, naming) {
 export function mountTuner(root, { life }) {
   const g0 = globalSettings();
   let strings = null; // 弦楽器の開放弦と目標 [{ midi, cents }]
-  const hist = []; // [{ t, m, c, key }]（m・c は聞こえないとき null）
-  let ref = null; // いま比べている音 { key, midi, cents, string }
-  let cand = null;
-  let candN = 0;
-  let lastVoiced = -1;
-  let lastT = 0;
+  const tt = makeTunerTrack({ keep: SPAN + 0.5 }); // 比べる音と針（core/tunerTrack.js）
   let harm = null; // 倍音の強さ（ならした dB）
   let harmTick = 0;
   let shownKey = '';
@@ -115,8 +111,7 @@ export function mountTuner(root, { life }) {
         btn.addEventListener('click', () => drone(btn, hzOf(s.midi, s.cents), `${p.name}${p.sci ? `（${p.sci}）` : ''}`));
         return btn;
       }));
-    ref = null;
-    hist.length = 0;
+    tt.setStrings(strings);
   }
 
   // ---- 高さの動き（直前 6 秒）とビブラート ----
@@ -188,44 +183,19 @@ export function mountTuner(root, { life }) {
 
   // ---- 1 枚ごと ----
   onMicFrame((f) => {
-    // 音の処理を作り直すと、時計が 0 から数え直しになる（iPhone・iPad）。それまでの線は消す
-    if (f.t < lastT - 0.5) hist.length = 0;
-    lastT = f.t;
-    if (f.gated || !f.freq || f.clarity < 0.8) {
-      hist.push({ t: f.t, m: null, c: null, key: '' });
-      trim(f.t);
-      return;
-    }
-    const m = freqToMidi(f.freq);
-    // 比べる音：弦楽器なら近い開放弦（2.5 半音まで）、ほかはいちばん近い半音。3 枚続いたら移る（境目でちらつかない）
-    const s = strings ? nearestString(m, strings, 2.5) : null;
-    const c0 = s ? { key: `s${s.i}`, midi: s.midi, cents: s.cents, string: s.i } : { key: `n${Math.round(m)}`, midi: Math.round(m), cents: 0, string: null };
-    if (!ref || c0.key === ref.key) {
-      ref = c0;
-      cand = null;
-      candN = 0;
-    } else if (cand?.key === c0.key) {
-      if (++candN >= 3 || f.t - lastVoiced > 0.25) ref = c0;
-    } else {
-      cand = c0;
-      candN = 1;
-      if (f.t - lastVoiced > 0.25) ref = c0;
-    }
-    lastVoiced = f.t;
-    hist.push({ t: f.t, m, c: (m - ref.midi) * 100 - ref.cents, key: ref.key });
-    trim(f.t);
-    // 倍音は 0.1 秒ごと
-    if (harmTick++ % 5 === 0 && f.rawFreq) {
+    const e = tt.feed(f);
+    // 倍音は 0.1 秒ごと（受け取った枚だけ）
+    if (e && harmTick++ % 5 === 0 && f.rawFreq) {
       const hs = harmonics(f.buf, f.sampleRate, f.rawFreq, { count: 8 });
       harm = hs.map((x, i) => ({ k: x.k, db: harm?.[i] ? harm[i].db * 0.5 + x.db * 0.5 : x.db }));
     }
   }, life);
-  function trim(t) {
-    while (hist.length && hist[0].t < t - SPAN - 0.5) hist.shift();
-  }
 
   // ---- 描く（画面の更新ごと） ----
   let shown = 0; // 針（なめらかに動かす）
+  let prevNow = 0;
+  let textAt = -1; // ずれの数字を書いた時刻（続いているあいだは 0.2 秒ごとに書き直す）
+  let textKey = '';
   let raf = 0;
   let colors = null;
   let colorsAt = 0;
@@ -236,48 +206,50 @@ export function mountTuner(root, { life }) {
       colorsAt = now;
     }
     const naming = globalSettings().naming;
-    const recent = hist.filter((x) => x.c != null && x.key === ref?.key && x.t >= lastT - 1.4);
-    const live = lastT - lastVoiced < 0.35 && recent.length >= 3;
-    panel.classList.toggle('idle', !live);
-    let value = null;
-    let vib = null;
-    if (recent.length >= 3) {
-      // ビブラートがあれば揺れの中心（直前 0.5 秒の平均）、なければ直前 5 枚の真ん中
-      const run = contiguous(recent);
-      vib = run.length >= 25 ? analyzeVibrato(run.map((x) => ({ t: x.t, c: x.c }))) : null;
-      const last = recent.slice(-5).map((x) => x.c).sort((a, b) => a - b);
-      value = vib ? mean(run.filter((x) => x.t >= lastT - 0.5).map((x) => x.c)) : last[last.length >> 1];
-    }
+    const dt = prevNow ? Math.min(0.1, (now - prevNow) / 1000) : 1 / 60;
+    prevNow = now;
+    const r = tt.read();
+    const live = r.state === 'live';
+    const showing = r.state !== 'idle';
+    panel.classList.toggle('idle', !showing);
+    panel.classList.toggle('hold', r.state === 'hold');
+    const { ref, value, vib } = r;
     if (value != null && ref) {
       const p = noteParts(ref.midi, naming);
-      nameEl.textContent = p.name;
-      sciEl.textContent = p.sci;
-      centsEl.textContent = `${fmtC(value)} セント`;
-      const f = hzOf(ref.midi, ref.cents + value);
-      hzEl.textContent = `${f.toFixed(f < 100 ? 2 : 1)} Hz`;
-      panel.classList.toggle('intune', Math.abs(value) <= IN);
-      panel.classList.toggle('near', Math.abs(value) > IN && Math.abs(value) <= NEAR);
-      panel.classList.toggle('sharp', value > NEAR);
-      panel.classList.toggle('flat', value < -NEAR);
-      const target = Math.max(-50, Math.min(50, value));
-      shown += (target - shown) * 0.3;
-      if (live && shownKey !== `${ref.key}${Math.abs(value) <= IN}`) {
-        shownKey = `${ref.key}${Math.abs(value) <= IN}`;
-        status.textContent = `${p.name} ${Math.abs(value) <= IN ? '合っています' : value > 0 ? '高め' : '低め'}`;
+      shown = easeNeedle(shown, Math.max(-50, Math.min(50, value)), dt);
+      // 数字は 0.2 秒ごと（細かく踊らないように）。音が変わったとき・聞こえ始めたときは、すぐ書き直す
+      const key = `${ref.key}|${live}`;
+      if (live && (key !== textKey || now - textAt >= 200)) {
+        const v = key !== textKey ? value : shown;
+        textAt = now;
+        nameEl.textContent = p.name;
+        sciEl.textContent = p.sci;
+        centsEl.textContent = `${fmtC(v)} セント`;
+        const f = hzOf(ref.midi, ref.cents + v);
+        hzEl.textContent = `${f.toFixed(f < 100 ? 2 : 1)} Hz`;
+        panel.classList.toggle('intune', Math.abs(v) <= IN);
+        panel.classList.toggle('near', Math.abs(v) > IN && Math.abs(v) <= NEAR);
+        panel.classList.toggle('sharp', v > NEAR);
+        panel.classList.toggle('flat', v < -NEAR);
+        if (shownKey !== `${ref.key}${Math.abs(v) <= IN}`) {
+          shownKey = `${ref.key}${Math.abs(v) <= IN}`;
+          status.textContent = `${p.name} ${Math.abs(v) <= IN ? '合っています' : v > 0 ? '高め' : '低め'}`;
+        }
       }
-    }
+      textKey = key;
+    } else textKey = '';
     needle.setAttribute('transform', `rotate(${(shown * 1.8).toFixed(2)} 150 150)`);
     // 弦のボタン：いま近い弦に印
     for (const b of stringRow.querySelectorAll('.tn-string')) {
-      const on = live && ref?.string != null && Number(b.dataset.i) === ref.string;
+      const on = showing && ref?.string != null && Number(b.dataset.i) === ref.string;
       b.classList.toggle('active', on);
       b.classList.toggle('intune', on && value != null && Math.abs(value) <= IN);
     }
-    vibEl.textContent = !live ? '' : vib
+    vibEl.textContent = !showing ? '' : vib
       ? `ビブラート：1 秒に ${vib.rate} 回・幅 ±${Math.round(vib.width)} セント。針は揺れの中心（${fmtC(vib.center)} セント）を出しています`
-      : recent.length >= 30 ? `まっすぐ伸びています（ふらつき ±${spread(contiguous(recent)).toFixed(1)} セント）` : '';
-    drawTrace(canvas, hist, lastT, colors, naming);
-    drawHarm(harmBars, live ? harm : null, ref, naming);
+      : r.run.length >= 30 ? `まっすぐ伸びています（ふらつき ±${spread(r.run).toFixed(1)} セント）` : '';
+    drawTrace(canvas, tt.hist, tt.lastT, colors, naming);
+    drawHarm(harmBars, showing ? harm : null, ref, naming);
   }
   raf = requestAnimationFrame(frame);
   life.signal.addEventListener('abort', () => {
@@ -293,12 +265,6 @@ const spread = (xs) => {
   const mu = mean(c);
   return Math.sqrt(mean(c.map((x) => (x - mu) ** 2)));
 };
-/** 終わりから、途切れずに続いている（50 ms より空かない）部分 */
-function contiguous(xs) {
-  let i = xs.length - 1;
-  while (i > 0 && xs[i].t - xs[i - 1].t <= 0.05) i--;
-  return xs.slice(i);
-}
 
 function svgEl(tag, attrs) {
   const el = document.createElementNS('http://www.w3.org/2000/svg', tag);

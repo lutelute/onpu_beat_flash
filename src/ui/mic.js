@@ -41,6 +41,8 @@ const MAX_RESTARTS = 2;
 let lastLevel = null; // くわしい様子（micDiag）用：直前の大きさと、前に読んだときからいちばん大きかった大きさ
 let peakSince = 0;
 const NO_SIGNAL_SEC = 1.5;
+// チューナー用：下限のこの割合までは高さを調べる（weak の枚。鳴っている音の続きにだけ使う。ゲームと採点には使わない）
+const WEAK = 0.35;
 const wallNow = () => performance.now() / 1000;
 /** iPhone・iPad（iPadOS の Safari は Mac と名のるので、触れる画面かどうかでも見る） */
 export const appleTouch = () =>
@@ -316,7 +318,10 @@ function poll() {
     return sendLevel(level, null, true, { noSignal });
   }
   // 選んだ楽器の音域（minFreq・maxFreq）の中だけで当てる。ゲームと設定画面には楽譜に書く高さで渡す
-  const p = level >= sensFloor(sens) ? detectMic(mono, ac.sampleRate, spec, { short }) : null;
+  // 下限より少し小さい枚（weak）も、チューナーが聞いているときは高さを調べる（弓を返すところ・音の終わりで途切れないように）
+  const floor = sensFloor(sens);
+  const weak = level < floor;
+  const p = level >= floor || (frameFns.size && level >= floor * WEAK) ? detectMic(mono, ac.sampleRate, spec, { short }) : null;
   // そのマイクの補正と基準のラを入れた高さ（A4 = 440 Hz の目盛り）
   const fixOpts = { fix: g.micFix?.[micKey(label)] ?? 0, refA: g.micRefA ?? 440 };
   const freq = p ? adjustFreq(p.freq, fixOpts) : null;
@@ -331,10 +336,10 @@ function poll() {
     const c = chordTr.feed({ t, level, notes: ns });
     if (c) emitChord({ ...c, from: 'mic' });
   } else chordTr = null;
-  const m = tracker.feed({ t, level, freq });
+  const m = tracker.feed({ t, level, freq: weak ? null : freq });
   if (m != null) emitNote(writtenNote(m, g.micInstrument));
-  sendFrame({ t, level, freq, rawFreq: p?.freq ?? null, clarity: p?.clarity ?? 0, gated: false, noSignal, buf: mono, sampleRate: ac.sampleRate });
-  sendLevel(level, writtenNote(tracker.note, g.micInstrument), false, { noSignal, freq, clarity: p?.clarity ?? 0 });
+  sendFrame({ t, level, freq, rawFreq: p?.freq ?? null, clarity: p?.clarity ?? 0, weak, gated: false, noSignal, buf: mono, sampleRate: ac.sampleRate });
+  sendLevel(level, writtenNote(tracker.note, g.micInstrument), false, { noSignal, freq: weak ? null : freq, clarity: weak ? 0 : p?.clarity ?? 0 });
 }
 
 // 裏に回っているあいだにマイクが切れたら、戻ってきたときにつなぎ直す
@@ -446,7 +451,7 @@ export function onMicLevel(fn, life) {
 /**
  * 20 ms ごとの 1 枚（チューナーと「なぞって採点」用。音の区切りはせず、聞こえた高さをそのまま）
  * fn({ t: 音の時計（秒）, level, freq: 補正と基準のラを入れた高さ（Hz・鳴る高さ）か null, rawFreq: 聞こえたままの高さ（buf の中の高さ）, clarity,
- *      gated: アプリの音で聞いていない, noSignal, buf: 直前の約 85 ms の波形（使うあいだだけ。とっておくなら写す）, sampleRate })
+ *      weak: 感度の下限より小さい（高さは分かっても、鳴っている音の続きにだけ使う）, gated: アプリの音で聞いていない, noSignal, buf: 直前の約 85 ms の波形（使うあいだだけ。とっておくなら写す）, sampleRate })
  * freq は「マイクで聞く楽器」の音域の中だけで当てた高さ
  */
 export function onMicFrame(fn, life) {
